@@ -56,6 +56,7 @@ type Operation = {
 type InstallmentStatus = "pending" | "paid" | "late" | string
 
 type InstallmentRow = {
+  paid_at: any
   id: string
   operation_id: string
   installment_number: number
@@ -741,6 +742,24 @@ export default function Page() {
     return rows
   }, [installmentsData])
 
+  const hoy = new Date().toISOString().slice(0,10)
+
+const cuotasHoy = cobranzaRows.filter(r =>
+  r.due_date?.slice(0,10) === hoy
+)
+
+const atrasadas = cobranzaRows.filter(r =>
+  r._daysLate > 0
+)
+
+const cobradasHoy = installmentsData.filter(r =>
+  r.paid_at?.slice(0,10) === hoy
+)
+
+const totalCobradoHoy = cobradasHoy.reduce(
+  (acc, r) => acc + Number(r.amount || 0),
+  0
+)
   // ---------- UI ----------
   if (loading) {
     return (
@@ -753,6 +772,30 @@ export default function Page() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-zinc-950 via-zinc-900 to-black text-zinc-100">
       <div className="max-w-6xl mx-auto p-4 sm:p-8">
+        <div className="grid grid-cols-3 gap-3 mb-6">
+
+  <div className="bg-green-600 text-white p-3 rounded-lg">
+    <div className="text-sm opacity-80">Cobrado hoy</div>
+    <div className="text-xl font-bold">
+      ${totalCobradoHoy.toLocaleString()}
+    </div>
+  </div>
+
+  <div className="bg-blue-600 text-white p-3 rounded-lg">
+    <div className="text-sm opacity-80">Cuotas para hoy</div>
+    <div className="text-xl font-bold">
+      {cuotasHoy.length}
+    </div>
+  </div>
+
+  <div className="bg-red-600 text-white p-3 rounded-lg">
+    <div className="text-sm opacity-80">Clientes atrasados</div>
+    <div className="text-xl font-bold">
+      {atrasadas.length}
+    </div>
+  </div>
+
+</div>
         {/* Top bar */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-5">
           <div>
