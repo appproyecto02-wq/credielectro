@@ -810,7 +810,7 @@ const totalCobradoHoy = cobradasHoy.reduce(
               type="button"
               onClick={async () => {
                 await fetchOperations(userId!, role)
-                if (role !== "admin") await fetchCobranza(userId!)
+                await fetchCobranza(userId!)
               }}
               className="px-3 py-2 rounded-xl bg-zinc-900/70 hover:bg-zinc-800 border border-zinc-800 backdrop-blur"
             >
