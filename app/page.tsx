@@ -27,6 +27,8 @@ type Client = {
 type Operation = {
   id: string
   created_at: string
+  first_due_date: string | null
+
   seller_id: string
   client_id: string | null
 
@@ -55,8 +57,8 @@ const freqLabel: Record<Operation["frequency"], string> = {
 }
 
 function money(n: number) {
-  if (!Number.isFinite(n)) return "$ 0,00"
-  return n.toLocaleString("es-AR", { style: "currency", currency: "ARS" })
+  if (!Number.isFinite(n)) return "$ 0"
+  return n.toLocaleString("es-AR", { style: "currency", currency: "ARS", maximumFractionDigits: 0 })
 }
 
 function toNumber(v: string) {
@@ -64,11 +66,21 @@ function toNumber(v: string) {
   return Number.isFinite(x) ? x : 0
 }
 
-function fullNameFromClient(c?: Partial<Client> | null) {
-  const s = [c?.first_name, c?.last_name].filter(Boolean).join(" ").trim()
+function fullName(first?: string | null, last?: string | null) {
+  const s = [first, last].filter(Boolean).join(" ").trim()
   return s || "Sin nombre"
 }
 
+function dateAR(d: string | null | undefined) {
+  if (!d) return "—"
+  try {
+    return new Date(d).toLocaleDateString("es-AR")
+  } catch {
+    return "—"
+  }
+}
+
+// ---------- PAGE ----------
 export default function Page() {
   const router = useRouter()
 
@@ -102,9 +114,28 @@ export default function Page() {
   const [interestPercent, setInterestPercent] = useState("")
   const [installments, setInstallments] = useState("1")
   const [notes, setNotes] = useState("")
+
   const [saving, setSaving] = useState(false)
 
-  // ---------- ADMIN EDIT (modal) ----------
+  const baseAmountNum = useMemo(() => toNumber(baseAmount), [baseAmount])
+  const interestPercentNum = useMemo(() => toNumber(interestPercent), [interestPercent])
+  const installmentsNum = useMemo(() => {
+    const n = Math.max(1, Math.min(60, Math.trunc(toNumber(installments))))
+    return n || 1
+  }, [installments])
+
+  // preview total/cuota (solo UI)
+  const previewTotal = useMemo(() => {
+    const total = baseAmountNum * (1 + interestPercentNum / 100)
+    return Math.max(0, total)
+  }, [baseAmountNum, interestPercentNum])
+
+  const previewInstallment = useMemo(() => {
+    if (installmentsNum <= 0) return 0
+    return previewTotal / installmentsNum
+  }, [previewTotal, installmentsNum])
+
+  // ---------- ADMIN EDIT MODAL ----------
   const [editingOp, setEditingOp] = useState<Operation | null>(null)
 
   // operation edit fields
@@ -116,7 +147,7 @@ export default function Page() {
   const [editDetail, setEditDetail] = useState("")
   const [editNotes, setEditNotes] = useState("")
 
-  // ✅ client edit fields (admin)
+  // client edit fields (admin)
   const [editClientId, setEditClientId] = useState<string | null>(null)
   const [editClientFirst, setEditClientFirst] = useState("")
   const [editClientLast, setEditClientLast] = useState("")
@@ -124,26 +155,7 @@ export default function Page() {
   const [editClientPhone, setEditClientPhone] = useState("")
   const [editClientAddress, setEditClientAddress] = useState("")
   const [loadingClientForEdit, setLoadingClientForEdit] = useState(false)
-
   const [savingEdit, setSavingEdit] = useState(false)
-
-  const baseAmountNum = useMemo(() => toNumber(baseAmount), [baseAmount])
-  const interestPercentNum = useMemo(() => toNumber(interestPercent), [interestPercent])
-  const installmentsNum = useMemo(() => {
-    const n = Math.max(1, Math.min(60, Math.trunc(toNumber(installments))))
-    return n || 1
-  }, [installments])
-
-  // UI preview
-  const previewTotal = useMemo(() => {
-    const total = baseAmountNum * (1 + interestPercentNum / 100)
-    return Math.max(0, total)
-  }, [baseAmountNum, interestPercentNum])
-
-  const previewInstallment = useMemo(() => {
-    if (installmentsNum <= 0) return 0
-    return previewTotal / installmentsNum
-  }, [previewTotal, installmentsNum])
 
   // ---------- AUTH ----------
   useEffect(() => {
@@ -170,7 +182,6 @@ export default function Page() {
 
       setUserId(user.id)
 
-      // profiles: id, name, role
       const profRes = await supabase.from("profiles").select("id, name, role").eq("id", user.id).maybeSingle()
       if (!mounted) return
 
@@ -225,8 +236,9 @@ export default function Page() {
   async function fetchOperations(currentUserId: string, currentRole: Role) {
     setErrorMsg(null)
 
+    // ✅ agregado first_due_date
     const baseSelect =
-      "id, created_at, seller_id, operation_type, frequency, client_id, base_amount, interest_percent, installments_count, total_amount, installment_amount, notes, sale_item, loan_purpose"
+      "id, created_at, first_due_date, seller_id, operation_type, frequency, client_id, base_amount, interest_percent, installments_count, total_amount, installment_amount, notes, sale_item, loan_purpose"
 
     let q = supabase.from("operations").select(baseSelect).order("created_at", { ascending: false })
     if (currentRole !== "admin") q = q.eq("seller_id", currentUserId)
@@ -341,6 +353,7 @@ export default function Page() {
         notes: notes.trim() || null,
         sale_item: operationType === "sale" ? (saleItem.trim() || null) : null,
         loan_purpose: operationType === "loan" ? (loanPurpose.trim() || null) : null,
+        // first_due_date lo calcula el trigger en Supabase ✅
       }
 
       const res = await supabase.from("operations").insert(payload).select("id").single()
@@ -383,7 +396,6 @@ export default function Page() {
 
     setEditingOp(op)
 
-    // fields de operación
     setEditType(op.operation_type)
     setEditFrequency(op.frequency)
     setEditBaseAmount(String(op.base_amount ?? ""))
@@ -392,7 +404,6 @@ export default function Page() {
     setEditDetail(op.operation_type === "sale" ? String(op.sale_item ?? "") : String(op.loan_purpose ?? ""))
     setEditNotes(String(op.notes ?? ""))
 
-    // ✅ traer cliente y cargar fields del cliente
     const cid = op.client_id
     setEditClientId(cid)
     if (!cid) {
@@ -442,7 +453,6 @@ export default function Page() {
 
     setSavingEdit(true)
     try {
-      // 1) update operation
       const opPayload: any = {
         operation_type: editType,
         frequency: editFrequency,
@@ -462,7 +472,6 @@ export default function Page() {
         return
       }
 
-      // 2) update client (si hay client_id)
       if (editClientId) {
         const cPayload: any = {
           first_name: editClientFirst.trim() || null,
@@ -489,19 +498,19 @@ export default function Page() {
   // ---------- UI ----------
   if (loading) {
     return (
-      <div className="min-h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center">
+      <div className="min-h-screen bg-gradient-to-br from-zinc-950 via-zinc-900 to-black text-zinc-100 flex items-center justify-center">
         <div className="text-zinc-300">Cargando...</div>
       </div>
     )
   }
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100">
+    <div className="min-h-screen bg-gradient-to-br from-zinc-950 via-zinc-900 to-black text-zinc-100">
       <div className="max-w-6xl mx-auto p-4 sm:p-8">
         {/* Top bar */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
           <div>
-            <div className="text-2xl font-semibold">Panel</div>
+            <div className="text-2xl font-semibold tracking-tight">CrediElectro Dyn</div>
             <div className="text-sm text-zinc-400">
               Rol: <span className="text-zinc-200">{role === "admin" ? "Administrador" : "Vendedor"}</span>
             </div>
@@ -511,22 +520,25 @@ export default function Page() {
             <button
               type="button"
               onClick={() => fetchOperations(userId!, role)}
-              className="px-3 py-2 rounded bg-zinc-900 hover:bg-zinc-800 border border-zinc-800"
+              className="px-3 py-2 rounded-xl bg-zinc-900/70 hover:bg-zinc-800 border border-zinc-800 backdrop-blur"
             >
               Refrescar
             </button>
-            <button type="button" onClick={signOut} className="px-3 py-2 rounded bg-red-600 hover:bg-red-500">
+            <button type="button" onClick={signOut} className="px-3 py-2 rounded-xl bg-red-600 hover:bg-red-500">
               Cerrar sesión
             </button>
           </div>
         </div>
 
-        {errorMsg && <div className="mb-4 p-3 rounded border border-red-900 bg-red-950 text-red-200">{errorMsg}</div>}
+        {errorMsg && (
+          <div className="mb-4 p-3 rounded-xl border border-red-900 bg-red-950 text-red-200">{errorMsg}</div>
+        )}
 
         {/* SELLER FORM */}
         {role !== "admin" && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div className="rounded-2xl border border-zinc-800 bg-zinc-950 p-4 sm:p-6">
+            {/* Form */}
+            <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 backdrop-blur p-4 sm:p-6 shadow-xl">
               <div className="text-lg font-semibold mb-4">Nueva operación</div>
 
               {/* Cliente */}
@@ -545,7 +557,7 @@ export default function Page() {
 
                 {clientMode === "existing" ? (
                   <select
-                    className="mt-3 w-full px-3 py-2 rounded bg-zinc-950 text-zinc-100 border border-zinc-800 focus:outline-none focus:ring-2 focus:ring-zinc-700"
+                    className="mt-3 w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800 focus:outline-none focus:ring-2 focus:ring-zinc-700"
                     value={selectedClientId}
                     onChange={(e) => setSelectedClientId(e.target.value)}
                   >
@@ -554,7 +566,7 @@ export default function Page() {
                     </option>
                     {clients.map((c) => (
                       <option key={c.id} value={c.id} className="bg-zinc-950 text-zinc-100">
-                        {fullNameFromClient(c)}
+                        {fullName(c.first_name, c.last_name)}
                         {c.dni ? ` — DNI ${c.dni}` : ""}
                       </option>
                     ))}
@@ -563,13 +575,13 @@ export default function Page() {
                   <>
                     <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <input
-                        className="w-full px-3 py-2 rounded bg-zinc-950 text-zinc-100 border border-zinc-800"
+                        className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
                         placeholder="Nombre"
                         value={firstName}
                         onChange={(e) => setFirstName(e.target.value)}
                       />
                       <input
-                        className="w-full px-3 py-2 rounded bg-zinc-950 text-zinc-100 border border-zinc-800"
+                        className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
                         placeholder="Apellido"
                         value={lastName}
                         onChange={(e) => setLastName(e.target.value)}
@@ -578,14 +590,14 @@ export default function Page() {
 
                     <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <input
-                        className="w-full px-3 py-2 rounded bg-zinc-950 text-zinc-100 border border-zinc-800"
+                        className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
                         placeholder="DNI"
                         value={dni}
                         onChange={(e) => setDni(e.target.value)}
                         inputMode="numeric"
                       />
                       <input
-                        className="w-full px-3 py-2 rounded bg-zinc-950 text-zinc-100 border border-zinc-800"
+                        className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
                         placeholder="Celular"
                         value={phone}
                         onChange={(e) => setPhone(e.target.value)}
@@ -595,7 +607,7 @@ export default function Page() {
 
                     <div className="mt-3">
                       <input
-                        className="w-full px-3 py-2 rounded bg-zinc-950 text-zinc-100 border border-zinc-800"
+                        className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
                         placeholder="Dirección"
                         value={address}
                         onChange={(e) => setAddress(e.target.value)}
@@ -609,7 +621,7 @@ export default function Page() {
               <div className="mb-4">
                 <div className="text-sm text-zinc-300 mb-2">Tipo</div>
                 <select
-                  className="w-full px-3 py-2 rounded bg-zinc-950 text-zinc-100 border border-zinc-800 focus:outline-none focus:ring-2 focus:ring-zinc-700"
+                  className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800 focus:outline-none focus:ring-2 focus:ring-zinc-700"
                   value={operationType}
                   onChange={(e) => setOperationType(e.target.value as any)}
                 >
@@ -628,12 +640,10 @@ export default function Page() {
                   {operationType === "sale" ? "Qué se vendió" : "Motivo del préstamo"}
                 </div>
                 <input
-                  className="w-full px-3 py-2 rounded bg-zinc-950 text-zinc-100 border border-zinc-800"
+                  className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
                   placeholder={operationType === "sale" ? `Ej: "Heladera", "Moto"...` : `Ej: "Efectivo", "Compra"...`}
                   value={operationType === "sale" ? saleItem : loanPurpose}
-                  onChange={(e) =>
-                    operationType === "sale" ? setSaleItem(e.target.value) : setLoanPurpose(e.target.value)
-                  }
+                  onChange={(e) => (operationType === "sale" ? setSaleItem(e.target.value) : setLoanPurpose(e.target.value))}
                 />
               </div>
 
@@ -641,7 +651,7 @@ export default function Page() {
               <div className="mb-4">
                 <div className="text-sm text-zinc-300 mb-2">Frecuencia</div>
                 <select
-                  className="w-full px-3 py-2 rounded bg-zinc-950 text-zinc-100 border border-zinc-800 focus:outline-none focus:ring-2 focus:ring-zinc-700"
+                  className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800 focus:outline-none focus:ring-2 focus:ring-zinc-700"
                   value={frequency}
                   onChange={(e) => setFrequency(e.target.value as any)}
                 >
@@ -665,7 +675,7 @@ export default function Page() {
                 <div>
                   <div className="text-sm text-zinc-300 mb-2">Monto base</div>
                   <input
-                    className="w-full px-3 py-2 rounded bg-zinc-950 text-zinc-100 border border-zinc-800"
+                    className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
                     placeholder="Ej: 50000"
                     value={baseAmount}
                     onChange={(e) => setBaseAmount(e.target.value)}
@@ -675,7 +685,7 @@ export default function Page() {
                 <div>
                   <div className="text-sm text-zinc-300 mb-2">Interés (%)</div>
                   <input
-                    className="w-full px-3 py-2 rounded bg-zinc-950 text-zinc-100 border border-zinc-800"
+                    className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
                     placeholder="Ej: 25"
                     value={interestPercent}
                     onChange={(e) => setInterestPercent(e.target.value)}
@@ -685,7 +695,7 @@ export default function Page() {
                 <div>
                   <div className="text-sm text-zinc-300 mb-2">Cuotas</div>
                   <input
-                    className="w-full px-3 py-2 rounded bg-zinc-950 text-zinc-100 border border-zinc-800"
+                    className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
                     placeholder="Ej: 8"
                     value={installments}
                     onChange={(e) => setInstallments(e.target.value)}
@@ -696,13 +706,13 @@ export default function Page() {
 
               {/* Preview */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
-                <div className="p-3 rounded border border-zinc-800 bg-zinc-950">
+                <div className="p-3 rounded-xl border border-zinc-800 bg-zinc-950/60">
                   <div className="text-xs text-zinc-400">Total (vista previa)</div>
-                  <div className="text-lg font-semibold">{money(previewTotal)}</div>
+                  <div className="text-lg font-semibold text-sky-300">{money(previewTotal)}</div>
                 </div>
-                <div className="p-3 rounded border border-zinc-800 bg-zinc-950">
+                <div className="p-3 rounded-xl border border-zinc-800 bg-zinc-950/60">
                   <div className="text-xs text-zinc-400">Cuota (vista previa)</div>
-                  <div className="text-lg font-semibold">{money(previewInstallment)}</div>
+                  <div className="text-lg font-semibold text-emerald-300">{money(previewInstallment)}</div>
                 </div>
               </div>
 
@@ -710,7 +720,7 @@ export default function Page() {
               <div className="mb-4">
                 <div className="text-sm text-zinc-300 mb-2">Notas (opcional)</div>
                 <textarea
-                  className="w-full px-3 py-2 rounded bg-zinc-950 text-zinc-100 border border-zinc-800 min-h-[90px]"
+                  className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800 min-h-[90px]"
                   placeholder="Notas..."
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
@@ -721,14 +731,14 @@ export default function Page() {
                 type="button"
                 onClick={saveOperation}
                 disabled={saving}
-                className="w-full py-3 rounded-xl bg-sky-600 hover:bg-sky-500 disabled:opacity-60 font-semibold"
+                className="w-full py-3 rounded-xl bg-sky-600 hover:bg-sky-500 disabled:opacity-60 font-semibold shadow-lg"
               >
                 {saving ? "Guardando..." : "Guardar operación"}
               </button>
             </div>
 
             {/* tabla seller */}
-            <div className="rounded-2xl border border-zinc-800 bg-zinc-950 p-4 sm:p-6">
+            <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 backdrop-blur p-4 sm:p-6 shadow-xl">
               <OperationsTable role={role} operations={operations} />
             </div>
           </div>
@@ -736,7 +746,7 @@ export default function Page() {
 
         {/* ADMIN: solo operaciones */}
         {role === "admin" && (
-          <div className="rounded-2xl border border-zinc-800 bg-zinc-950 p-4 sm:p-6">
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 backdrop-blur p-4 sm:p-6 shadow-xl">
             <OperationsTable role={role} operations={operations} onEdit={startEditOperation} onDelete={deleteOperation} />
           </div>
         )}
@@ -745,18 +755,20 @@ export default function Page() {
       {/* MODAL EDIT (solo admin) */}
       {role === "admin" && editingOp && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
-          <div className="w-full max-w-2xl rounded-2xl border border-zinc-800 bg-zinc-950 p-4 sm:p-6">
+          <div className="w-full max-w-2xl rounded-2xl border border-zinc-800 bg-zinc-950 p-4 sm:p-6 shadow-2xl">
             <div className="flex items-center justify-between mb-4">
               <div>
                 <div className="text-lg font-semibold">Editar operación + cliente</div>
                 <div className="text-xs text-zinc-400">
                   Cliente:{" "}
-                  {loadingClientForEdit ? "Cargando..." : fullNameFromClient({ first_name: editClientFirst, last_name: editClientLast })}
+                  {loadingClientForEdit
+                    ? "Cargando..."
+                    : fullName(editClientFirst || null, editClientLast || null)}
                 </div>
               </div>
               <button
                 type="button"
-                className="px-3 py-2 rounded bg-zinc-900 hover:bg-zinc-800 border border-zinc-800"
+                className="px-3 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800"
                 onClick={() => setEditingOp(null)}
               >
                 Cerrar
@@ -768,21 +780,21 @@ export default function Page() {
               <div className="text-sm font-semibold mb-3">Datos del cliente</div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <input
-                  className="w-full px-3 py-2 rounded bg-zinc-950 text-zinc-100 border border-zinc-800"
+                  className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
                   placeholder="Nombre"
                   value={editClientFirst}
                   onChange={(e) => setEditClientFirst(e.target.value)}
                   disabled={loadingClientForEdit || !editClientId}
                 />
                 <input
-                  className="w-full px-3 py-2 rounded bg-zinc-950 text-zinc-100 border border-zinc-800"
+                  className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
                   placeholder="Apellido"
                   value={editClientLast}
                   onChange={(e) => setEditClientLast(e.target.value)}
                   disabled={loadingClientForEdit || !editClientId}
                 />
                 <input
-                  className="w-full px-3 py-2 rounded bg-zinc-950 text-zinc-100 border border-zinc-800"
+                  className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
                   placeholder="DNI"
                   value={editClientDni}
                   onChange={(e) => setEditClientDni(e.target.value)}
@@ -790,7 +802,7 @@ export default function Page() {
                   disabled={loadingClientForEdit || !editClientId}
                 />
                 <input
-                  className="w-full px-3 py-2 rounded bg-zinc-950 text-zinc-100 border border-zinc-800"
+                  className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
                   placeholder="Celular"
                   value={editClientPhone}
                   onChange={(e) => setEditClientPhone(e.target.value)}
@@ -798,7 +810,7 @@ export default function Page() {
                   disabled={loadingClientForEdit || !editClientId}
                 />
                 <input
-                  className="sm:col-span-2 w-full px-3 py-2 rounded bg-zinc-950 text-zinc-100 border border-zinc-800"
+                  className="sm:col-span-2 w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
                   placeholder="Dirección"
                   value={editClientAddress}
                   onChange={(e) => setEditClientAddress(e.target.value)}
@@ -816,7 +828,7 @@ export default function Page() {
                 <div>
                   <div className="text-sm text-zinc-300 mb-2">Tipo</div>
                   <select
-                    className="w-full px-3 py-2 rounded bg-zinc-950 text-zinc-100 border border-zinc-800"
+                    className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
                     value={editType}
                     onChange={(e) => setEditType(e.target.value as any)}
                   >
@@ -828,7 +840,7 @@ export default function Page() {
                 <div>
                   <div className="text-sm text-zinc-300 mb-2">Frecuencia</div>
                   <select
-                    className="w-full px-3 py-2 rounded bg-zinc-950 text-zinc-100 border border-zinc-800"
+                    className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
                     value={editFrequency}
                     onChange={(e) => setEditFrequency(e.target.value as any)}
                   >
@@ -843,7 +855,7 @@ export default function Page() {
               <div className="mb-3">
                 <div className="text-sm text-zinc-300 mb-2">{editType === "sale" ? "Qué se vendió" : "Motivo del préstamo"}</div>
                 <input
-                  className="w-full px-3 py-2 rounded bg-zinc-950 text-zinc-100 border border-zinc-800"
+                  className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
                   value={editDetail}
                   onChange={(e) => setEditDetail(e.target.value)}
                 />
@@ -853,7 +865,7 @@ export default function Page() {
                 <div>
                   <div className="text-sm text-zinc-300 mb-2">Monto base</div>
                   <input
-                    className="w-full px-3 py-2 rounded bg-zinc-950 text-zinc-100 border border-zinc-800"
+                    className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
                     value={editBaseAmount}
                     onChange={(e) => setEditBaseAmount(e.target.value)}
                     inputMode="decimal"
@@ -862,7 +874,7 @@ export default function Page() {
                 <div>
                   <div className="text-sm text-zinc-300 mb-2">Interés (%)</div>
                   <input
-                    className="w-full px-3 py-2 rounded bg-zinc-950 text-zinc-100 border border-zinc-800"
+                    className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
                     value={editInterest}
                     onChange={(e) => setEditInterest(e.target.value)}
                     inputMode="decimal"
@@ -871,7 +883,7 @@ export default function Page() {
                 <div>
                   <div className="text-sm text-zinc-300 mb-2">Cuotas</div>
                   <input
-                    className="w-full px-3 py-2 rounded bg-zinc-950 text-zinc-100 border border-zinc-800"
+                    className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
                     value={editInstallments}
                     onChange={(e) => setEditInstallments(e.target.value)}
                     inputMode="numeric"
@@ -882,7 +894,7 @@ export default function Page() {
               <div className="mb-4">
                 <div className="text-sm text-zinc-300 mb-2">Notas</div>
                 <textarea
-                  className="w-full px-3 py-2 rounded bg-zinc-950 text-zinc-100 border border-zinc-800 min-h-[90px]"
+                  className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800 min-h-[90px]"
                   value={editNotes}
                   onChange={(e) => setEditNotes(e.target.value)}
                 />
@@ -893,20 +905,19 @@ export default function Page() {
                   type="button"
                   onClick={saveEditOperation}
                   disabled={savingEdit || loadingClientForEdit}
-                  className="px-4 py-2 rounded bg-sky-600 hover:bg-sky-500 disabled:opacity-60 font-semibold"
+                  className="px-4 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 disabled:opacity-60 font-semibold"
                 >
                   {savingEdit ? "Guardando..." : "Guardar cambios"}
                 </button>
                 <button
                   type="button"
                   onClick={() => setEditingOp(null)}
-                  className="px-4 py-2 rounded bg-zinc-900 hover:bg-zinc-800 border border-zinc-800"
+                  className="px-4 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800"
                 >
                   Cancelar
                 </button>
               </div>
             </div>
-
           </div>
         </div>
       )}
@@ -914,6 +925,7 @@ export default function Page() {
   )
 }
 
+// ---------- TABLE ----------
 function OperationsTable({
   role,
   operations,
@@ -925,20 +937,23 @@ function OperationsTable({
   onDelete?: (id: string) => void
   onEdit?: (op: Operation) => void
 }) {
+  const canAdminActions = role === "admin"
+
   return (
     <div>
       <div className="flex items-center justify-between mb-3">
         <div className="text-lg font-semibold">Operaciones</div>
       </div>
 
-      <div className="overflow-x-auto border border-zinc-800 rounded-xl bg-zinc-950">
-        <table className="min-w-[1050px] w-full text-sm table-auto border-collapse">
+      <div className="overflow-x-auto border border-zinc-800 rounded-xl bg-zinc-950/40 backdrop-blur">
+        <table className="min-w-[1200px] w-full text-sm table-auto border-collapse">
           <thead className="bg-zinc-900">
             <tr>
-              {role === "admin" && (
-                <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Vendedor</th>
-              )}
+              {role === "admin" && <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Vendedor</th>}
               <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Fecha</th>
+              {/* ✅ NUEVA COLUMNA */}
+              <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">1ra cuota</th>
+
               <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Tipo</th>
               <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Detalle</th>
               <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Frecuencia</th>
@@ -947,18 +962,14 @@ function OperationsTable({
               <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Total</th>
               <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Cuotas</th>
               <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Cuota</th>
-
-              {/* ✅ Acciones SOLO admin */}
-              {role === "admin" && (
-                <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Acciones</th>
-              )}
+              {canAdminActions && <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Acciones</th>}
             </tr>
           </thead>
 
           <tbody>
             {operations.length === 0 ? (
               <tr>
-                <td className="p-3 text-zinc-400" colSpan={role === "admin" ? 11 : 10}>
+                <td className="p-3 text-zinc-400" colSpan={canAdminActions ? 12 : 11}>
                   No hay operaciones.
                 </td>
               </tr>
@@ -966,7 +977,7 @@ function OperationsTable({
               operations.map((op) => {
                 const detail = op.operation_type === "sale" ? op.sale_item : op.loan_purpose
                 return (
-                  <tr key={op.id} className="odd:bg-zinc-950">
+                  <tr key={op.id} className="odd:bg-zinc-950/40 hover:bg-zinc-900/40 transition">
                     {role === "admin" && (
                       <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{op.seller_name ?? "Vendedor"}</td>
                     )}
@@ -974,21 +985,35 @@ function OperationsTable({
                     <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
                       {new Date(op.created_at).toLocaleString("es-AR")}
                     </td>
+
+                    {/* ✅ 1RA CUOTA */}
+                    <td className="p-2 border-b border-zinc-900 whitespace-nowrap text-emerald-300 font-semibold">
+                      {dateAR(op.first_due_date)}
+                    </td>
+
                     <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
                       {op.operation_type === "sale" ? "Venta" : "Préstamo"}
                     </td>
+
                     <td className="p-2 border-b border-zinc-900 min-w-[220px]">
                       {detail || <span className="text-zinc-500">—</span>}
                     </td>
+
                     <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{freqLabel[op.frequency]}</td>
+
                     <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{money(op.base_amount)}</td>
+
                     <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{op.interest_percent}%</td>
-                    <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{money(op.total_amount)}</td>
+
+                    <td className="p-2 border-b border-zinc-900 whitespace-nowrap text-sky-300 font-semibold">
+                      {money(op.total_amount)}
+                    </td>
+
                     <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{op.installments_count}</td>
+
                     <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{money(op.installment_amount)}</td>
 
-                    {/* ✅ Acciones SOLO admin */}
-                    {role === "admin" && (
+                    {canAdminActions && (
                       <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
                         <div className="flex gap-2">
                           <button
