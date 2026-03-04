@@ -56,13 +56,13 @@ type Operation = {
 type InstallmentStatus = "pending" | "paid" | "late" | string
 
 type InstallmentRow = {
-  paid_at: any
   id: string
   operation_id: string
   installment_number: number
   due_date: string | null
   amount: number | null
   status: InstallmentStatus
+  paid_at: string | null
 
   // joined
   operation?: {
@@ -82,6 +82,9 @@ type InstallmentRow = {
     phone: string | null
     address: string | null
   } | null
+
+  // UI only (admin)
+  seller_name?: string
 }
 
 const freqLabel: Record<Operation["frequency"], string> = {
@@ -166,7 +169,7 @@ export default function Page() {
   const [profile, setProfile] = useState<Profile | null>(null)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
 
-  // view mode
+  // view mode (ahora también para admin)
   const [view, setView] = useState<"ops" | "cobranza">("ops")
 
   // seller data
@@ -277,10 +280,14 @@ export default function Page() {
       })
 
       await fetchOperations(user.id, r)
+
+      // vendedor: carga clientes
       if (r !== "admin") {
         await fetchClients(user.id)
-        await fetchCobranza(user.id) // pre-carga cobranza para que cambie rápido
       }
+
+      // ✅ ahora también precargamos cobranza para ADMIN
+      await fetchCobranza(user.id, r)
 
       setLoading(false)
     }
@@ -362,12 +369,15 @@ export default function Page() {
     setOperations(ops)
   }
 
-  async function fetchCobranza(sellerId: string) {
+  // ✅ ARREGLO CLAVE: fetchCobranza ya NO filtra siempre.
+  // - si role === admin: trae TODAS
+  // - si role === seller: trae solo las suyas (por operation.seller_id)
+  async function fetchCobranza(currentUserId: string, currentRole: Role) {
     setLoadingCobranza(true)
     setErrorMsg(null)
+
     try {
-      // Trae cuotas + join con operación y cliente
-      // Nota: si en tu tabla installments no existe "amount", igual funciona (queda null).
+      // 1) traer installments + join a operations
       const res = await supabase
         .from("installments")
         .select(
@@ -378,6 +388,7 @@ export default function Page() {
           due_date,
           amount,
           status,
+          paid_at,
           operations:operation_id (
             id,
             seller_id,
@@ -386,9 +397,6 @@ export default function Page() {
             installment_amount,
             late_fee_type,
             late_fee_value
-          ),
-          clients:operations!inner (
-            id
           )
         `
         )
@@ -400,62 +408,76 @@ export default function Page() {
         return
       }
 
-      // El select arriba no trae datos del cliente directo porque depende del join.
-      // Entonces hacemos un 2do paso: traemos clientes por ids que aparecen en operations.client_id
       const rows = (res.data as any[]) ?? []
-      const opClientIds = Array.from(
-        new Set(rows.map((r) => r?.operations?.client_id).filter(Boolean) as string[])
-      )
 
-      let clientsMap = new Map<string, any>()
+      // 2) mapear client_id -> cliente
+      const opClientIds = Array.from(new Set(rows.map((r) => r?.operations?.client_id).filter(Boolean) as string[]))
+
+      const clientsMap = new Map<string, any>()
       if (opClientIds.length) {
-        const cRes = await supabase
-          .from("clients")
-          .select("id, first_name, last_name, phone, address")
-          .in("id", opClientIds)
-
+        const cRes = await supabase.from("clients").select("id, first_name, last_name, phone, address").in("id", opClientIds)
         if (!cRes.error) {
           for (const c of (cRes.data as any[]) ?? []) clientsMap.set(c.id, c)
         }
       }
 
-      // Filtrar: SOLO del vendedor logueado
-      const normalized: InstallmentRow[] = rows
-        .map((r) => {
-          const op = r?.operations ?? null
-          const clientId = op?.client_id ?? null
-          const client = clientId ? clientsMap.get(clientId) ?? null : null
-
-          return {
-            id: String(r.id),
-            operation_id: String(r.operation_id),
-            installment_number: Number(r.installment_number ?? 0),
-            due_date: r.due_date ?? null,
-            amount: r.amount ?? null,
-            status: (r.status ?? "pending") as InstallmentStatus,
-            operation: op
-              ? {
-                  id: String(op.id),
-                  seller_id: String(op.seller_id),
-                  client_id: op.client_id ?? null,
-                  frequency: op.frequency,
-                  installment_amount: Number(op.installment_amount ?? 0),
-                  late_fee_type: op.late_fee_type ?? "fixed_daily",
-                  late_fee_value: op.late_fee_value ?? 0,
-                }
-              : null,
-            client: client
-              ? {
-                  id: String(client.id),
-                  first_name: client.first_name ?? null,
-                  last_name: client.last_name ?? null,
-                  phone: client.phone ?? null,
-                  address: client.address ?? null,
-                }
-              : null,
+      // 3) admin: mapear seller_id -> vendedor
+      const sellersMap = new Map<string, string>()
+      if (currentRole === "admin") {
+        const sellerIds = Array.from(new Set(rows.map((r) => r?.operations?.seller_id).filter(Boolean) as string[]))
+        if (sellerIds.length) {
+          const sRes = await supabase.from("profiles").select("id, name").in("id", sellerIds)
+          if (!sRes.error) {
+            for (const p of (sRes.data as any[]) ?? []) {
+              sellersMap.set(String(p.id), String(p.name ?? "").trim() || "Vendedor")
+            }
           }
-        })
-        .filter((r) => r.operation?.seller_id === sellerId)
+        }
+      }
+
+      // 4) normalizar y filtrar SOLO si es vendedor
+      let normalized: InstallmentRow[] = rows.map((r) => {
+        const op = r?.operations ?? null
+        const clientId = op?.client_id ?? null
+        const client = clientId ? clientsMap.get(clientId) ?? null : null
+
+        const sellerId = op?.seller_id ? String(op.seller_id) : ""
+
+        return {
+          id: String(r.id),
+          operation_id: String(r.operation_id),
+          installment_number: Number(r.installment_number ?? 0),
+          due_date: r.due_date ?? null,
+          amount: r.amount ?? null,
+          status: (r.status ?? "pending") as InstallmentStatus,
+          paid_at: (r.paid_at ?? null) as string | null,
+          operation: op
+            ? {
+                id: String(op.id),
+                seller_id: sellerId,
+                client_id: op.client_id ?? null,
+                frequency: op.frequency,
+                installment_amount: Number(op.installment_amount ?? 0),
+                late_fee_type: op.late_fee_type ?? "fixed_daily",
+                late_fee_value: op.late_fee_value ?? 0,
+              }
+            : null,
+          client: client
+            ? {
+                id: String(client.id),
+                first_name: client.first_name ?? null,
+                last_name: client.last_name ?? null,
+                phone: client.phone ?? null,
+                address: client.address ?? null,
+              }
+            : null,
+          seller_name: currentRole === "admin" ? sellersMap.get(sellerId) ?? "Vendedor" : undefined,
+        }
+      })
+
+      if (currentRole !== "admin") {
+        normalized = normalized.filter((r) => r.operation?.seller_id === currentUserId)
+      }
 
       setInstallmentsData(normalized)
     } finally {
@@ -535,7 +557,6 @@ export default function Page() {
         notes: notes.trim() || null,
         sale_item: operationType === "sale" ? (saleItem.trim() || null) : null,
         loan_purpose: operationType === "loan" ? (loanPurpose.trim() || null) : null,
-        // first_due_date y cuotas: lo maneja Supabase con triggers ✅
       }
 
       const res = await supabase.from("operations").insert(payload).select("id").single()
@@ -552,7 +573,7 @@ export default function Page() {
       setNotes("")
 
       await fetchOperations(userId, role)
-      await fetchCobranza(userId) // refrescar cobranza
+      await fetchCobranza(userId, role)
       alert("Operación guardada")
     } finally {
       setSaving(false)
@@ -574,12 +595,16 @@ export default function Page() {
     if (!userId) return
     setSavingCobranzaId(installmentId)
     try {
-      const res = await supabase.from("installments").update({ status: "paid" }).eq("id", installmentId)
+      const res = await supabase
+        .from("installments")
+        .update({ status: "paid", paid_at: new Date().toISOString() })
+        .eq("id", installmentId)
+
       if (res.error) {
         alert(res.error.message)
         return
       }
-      await fetchCobranza(userId)
+      await fetchCobranza(userId, role)
     } finally {
       setSavingCobranzaId(null)
     }
@@ -589,13 +614,12 @@ export default function Page() {
     if (!userId) return
     setSavingCobranzaId(installmentId)
     try {
-      // Dejarlo en "late" ayuda a diferenciar, pero si preferís "pending" avisame.
       const res = await supabase.from("installments").update({ status: "late" }).eq("id", installmentId)
       if (res.error) {
         alert(res.error.message)
         return
       }
-      await fetchCobranza(userId)
+      await fetchCobranza(userId, role)
     } finally {
       setSavingCobranzaId(null)
     }
@@ -704,10 +728,10 @@ export default function Page() {
     }
   }
 
-  // ---------- COBRANZA: dataset ordenado (opción 2) ----------
+  // ---------- COBRANZA: dataset ordenado ----------
   const cobranzaRows = useMemo(() => {
     const rows = installmentsData
-      .filter((r) => role === "admin" ? true : (r.status ?? "pending") !== "paid")
+      .filter((r) => (role === "admin" ? true : (r.status ?? "pending") !== "paid"))
       .map((r) => {
         const op = r.operation
         const client = r.client
@@ -733,33 +757,23 @@ export default function Page() {
           _frequency: op?.frequency ?? "weekly",
         }
       })
-      .sort((a, b) => {
+      .sort((a: any, b: any) => {
         const da = a.due_date ? new Date(a.due_date).getTime() : 0
         const db = b.due_date ? new Date(b.due_date).getTime() : 0
         return da - db
       })
 
     return rows
-  }, [installmentsData])
+  }, [installmentsData, role])
 
-  const hoy = new Date().toISOString().slice(0,10)
+  const hoy = new Date().toISOString().slice(0, 10)
 
-const cuotasHoy = cobranzaRows.filter(r =>
-  r.due_date?.slice(0,10) === hoy
-)
+  const cuotasHoy = cobranzaRows.filter((r: any) => r.due_date?.slice(0, 10) === hoy)
+  const atrasadas = cobranzaRows.filter((r: any) => r._daysLate > 0)
+  const cobradasHoy = installmentsData.filter((r) => r.paid_at?.slice(0, 10) === hoy)
 
-const atrasadas = cobranzaRows.filter(r =>
-  r._daysLate > 0
-)
+  const totalCobradoHoy = cobradasHoy.reduce((acc, r) => acc + Number(r.amount || 0), 0)
 
-const cobradasHoy = installmentsData.filter(r =>
-  r.paid_at?.slice(0,10) === hoy
-)
-
-const totalCobradoHoy = cobradasHoy.reduce(
-  (acc, r) => acc + Number(r.amount || 0),
-  0
-)
   // ---------- UI ----------
   if (loading) {
     return (
@@ -773,29 +787,22 @@ const totalCobradoHoy = cobradasHoy.reduce(
     <div className="min-h-screen bg-gradient-to-br from-zinc-950 via-zinc-900 to-black text-zinc-100">
       <div className="max-w-6xl mx-auto p-4 sm:p-8">
         <div className="grid grid-cols-3 gap-3 mb-6">
+          <div className="bg-green-600 text-white p-3 rounded-lg">
+            <div className="text-sm opacity-80">Cobrado hoy</div>
+            <div className="text-xl font-bold">${totalCobradoHoy.toLocaleString()}</div>
+          </div>
 
-  <div className="bg-green-600 text-white p-3 rounded-lg">
-    <div className="text-sm opacity-80">Cobrado hoy</div>
-    <div className="text-xl font-bold">
-      ${totalCobradoHoy.toLocaleString()}
-    </div>
-  </div>
+          <div className="bg-blue-600 text-white p-3 rounded-lg">
+            <div className="text-sm opacity-80">Cuotas para hoy</div>
+            <div className="text-xl font-bold">{cuotasHoy.length}</div>
+          </div>
 
-  <div className="bg-blue-600 text-white p-3 rounded-lg">
-    <div className="text-sm opacity-80">Cuotas para hoy</div>
-    <div className="text-xl font-bold">
-      {cuotasHoy.length}
-    </div>
-  </div>
+          <div className="bg-red-600 text-white p-3 rounded-lg">
+            <div className="text-sm opacity-80">Clientes atrasados</div>
+            <div className="text-xl font-bold">{atrasadas.length}</div>
+          </div>
+        </div>
 
-  <div className="bg-red-600 text-white p-3 rounded-lg">
-    <div className="text-sm opacity-80">Clientes atrasados</div>
-    <div className="text-xl font-bold">
-      {atrasadas.length}
-    </div>
-  </div>
-
-</div>
         {/* Top bar */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-5">
           <div>
@@ -810,7 +817,7 @@ const totalCobradoHoy = cobradasHoy.reduce(
               type="button"
               onClick={async () => {
                 await fetchOperations(userId!, role)
-                await fetchCobranza(userId!)
+                await fetchCobranza(userId!, role)
               }}
               className="px-3 py-2 rounded-xl bg-zinc-900/70 hover:bg-zinc-800 border border-zinc-800 backdrop-blur"
             >
@@ -822,40 +829,38 @@ const totalCobradoHoy = cobradasHoy.reduce(
           </div>
         </div>
 
-        {/* Navegación interna (solo vendedor) */}
-        {role !== "admin" && (
-          <div className="mb-6">
-            <div className="inline-flex rounded-2xl border border-zinc-800 bg-zinc-950/60 backdrop-blur p-1">
-              <button
-                type="button"
-                onClick={() => setView("ops")}
-                className={`px-4 py-2 rounded-xl text-sm font-semibold transition ${
-                  view === "ops" ? "bg-sky-600 text-white" : "text-zinc-200 hover:bg-zinc-900"
-                }`}
-              >
-                Operaciones
-              </button>
-              <button
-                type="button"
-                onClick={async () => {
-                  setView("cobranza")
-                  await fetchCobranza(userId!)
-                }}
-                className={`px-4 py-2 rounded-xl text-sm font-semibold transition ${
-                  view === "cobranza" ? "bg-emerald-600 text-white" : "text-zinc-200 hover:bg-zinc-900"
-                }`}
-              >
-                Cobranza
-              </button>
-            </div>
+        {/* Navegación interna (ahora también para admin) */}
+        <div className="mb-6">
+          <div className="inline-flex rounded-2xl border border-zinc-800 bg-zinc-950/60 backdrop-blur p-1">
+            <button
+              type="button"
+              onClick={() => setView("ops")}
+              className={`px-4 py-2 rounded-xl text-sm font-semibold transition ${
+                view === "ops" ? "bg-sky-600 text-white" : "text-zinc-200 hover:bg-zinc-900"
+              }`}
+            >
+              Operaciones
+            </button>
+            <button
+              type="button"
+              onClick={async () => {
+                setView("cobranza")
+                await fetchCobranza(userId!, role)
+              }}
+              className={`px-4 py-2 rounded-xl text-sm font-semibold transition ${
+                view === "cobranza" ? "bg-emerald-600 text-white" : "text-zinc-200 hover:bg-zinc-900"
+              }`}
+            >
+              Cobranza
+            </button>
           </div>
-        )}
+        </div>
 
         {errorMsg && (
           <div className="mb-4 p-3 rounded-xl border border-red-900 bg-red-950 text-red-200">{errorMsg}</div>
         )}
 
-        {/* SELLER */}
+        {/* SELLER OPS */}
         {role !== "admin" && view === "ops" && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* Form */}
@@ -957,12 +962,10 @@ const totalCobradoHoy = cobradasHoy.reduce(
 
               {/* Detalle */}
               <div className="mb-4">
-                <div className="text-sm text-zinc-300 mb-2">
-                  {operationType === "sale" ? "Qué se vendió" : "Motivo del préstamo"}
-                </div>
+                <div className="text-sm text-zinc-300 mb-2">{operationType === "sale" ? "Qué se vendió" : "Motivo del préstamo"}</div>
                 <input
                   className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
-                  placeholder={operationType === "sale" ? `Ej: "Heladera", "Moto"...` : `Ej: "Efectivo", "Compra"...`}
+                  placeholder={operationType === "sale" ? Ej: "Heladera", "Moto"... : Ej: "Efectivo", "Compra"...}
                   value={operationType === "sale" ? saleItem : loanPurpose}
                   onChange={(e) => (operationType === "sale" ? setSaleItem(e.target.value) : setLoanPurpose(e.target.value))}
                 />
@@ -976,18 +979,10 @@ const totalCobradoHoy = cobradasHoy.reduce(
                   value={frequency}
                   onChange={(e) => setFrequency(e.target.value as any)}
                 >
-                  <option value="weekly" className="bg-zinc-950 text-zinc-100">
-                    Semanal
-                  </option>
-                  <option value="biweekly" className="bg-zinc-950 text-zinc-100">
-                    Quincenal
-                  </option>
-                  <option value="three_weeks" className="bg-zinc-950 text-zinc-100">
-                    Cada 3 semanas
-                  </option>
-                  <option value="monthly" className="bg-zinc-950 text-zinc-100">
-                    Mensual
-                  </option>
+                  <option value="weekly">Semanal</option>
+                  <option value="biweekly">Quincenal</option>
+                  <option value="three_weeks">Cada 3 semanas</option>
+                  <option value="monthly">Mensual</option>
                 </select>
               </div>
 
@@ -1065,19 +1060,26 @@ const totalCobradoHoy = cobradasHoy.reduce(
           </div>
         )}
 
-        {/* COBRANZA (integrada) */}
-        {role !== "admin" && view === "cobranza" && (
+        {/* OPERACIONES (ADMIN) */}
+        {role === "admin" && view === "ops" && (
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 backdrop-blur p-4 sm:p-6 shadow-xl">
+            <OperationsTable role={role} operations={operations} onEdit={startEditOperation} onDelete={deleteOperation} />
+          </div>
+        )}
+
+        {/* COBRANZA (ADMIN + VENDEDOR) */}
+        {view === "cobranza" && (
           <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 backdrop-blur p-4 sm:p-6 shadow-xl">
             <div className="flex items-center justify-between mb-3">
               <div>
                 <div className="text-lg font-semibold">Cobranza</div>
                 <div className="text-xs text-zinc-400">
-                  Pendientes + Atrasadas (ordenadas por vencimiento)
+                  {role === "admin" ? "Todas (pendientes, atrasadas y pagadas)" : "Pendientes + Atrasadas (ordenadas por vencimiento)"}
                 </div>
               </div>
               <button
                 type="button"
-                onClick={() => fetchCobranza(userId!)}
+                onClick={() => fetchCobranza(userId!, role)}
                 className="px-3 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800"
                 disabled={loadingCobranza}
               >
@@ -1089,6 +1091,7 @@ const totalCobradoHoy = cobradasHoy.reduce(
               <table className="min-w-[1200px] w-full text-sm table-auto border-collapse">
                 <thead className="bg-zinc-900">
                   <tr>
+                    {role === "admin" && <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Vendedor</th>}
                     <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Cliente</th>
                     <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Vence</th>
                     <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Cuota #</th>
@@ -1096,76 +1099,73 @@ const totalCobradoHoy = cobradasHoy.reduce(
                     <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Monto</th>
                     <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Atraso</th>
                     <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Mora</th>
-                    <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Total a cobrar</th>
-                    <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Acciones</th>
+                    <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Total</th>
+                    <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Estado</th>
+                    {role !== "admin" && <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Acciones</th>}
                   </tr>
                 </thead>
                 <tbody>
                   {cobranzaRows.length === 0 ? (
                     <tr>
-                      <td className="p-3 text-zinc-400" colSpan={9}>
-                        No hay cuotas pendientes 🎉
+                      <td className="p-3 text-zinc-400" colSpan={role === "admin" ? 10 : 10}>
+                        No hay cuotas para mostrar.
                       </td>
                     </tr>
                   ) : (
-                    cobranzaRows.map((r) => (
+                    (cobranzaRows as any[]).map((r) => (
                       <tr key={r.id} className="odd:bg-zinc-950/40 hover:bg-zinc-900/40 transition">
+                        {role === "admin" && (
+                          <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{r.seller_name ?? "Vendedor"}</td>
+                        )}
                         <td className="p-2 border-b border-zinc-900">
                           <div className="font-semibold">{r._clientName}</div>
                           <div className="text-xs text-zinc-400">
-                            {r._clientPhone ? `📞 ${r._clientPhone}` : ""}{" "}
-                            {r._clientAddress ? `• 📍 ${r._clientAddress}` : ""}
+                            {r._clientPhone ? 📞 ${r._clientPhone} : ""} {r._clientAddress ? • 📍 ${r._clientAddress} : ""}
                           </div>
                         </td>
+                        <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{dateAR(r.due_date)}</td>
+                        <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{r.installment_number}</td>
+                        <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{freqLabel[r._frequency as keyof typeof freqLabel] ?? "—"}</td>
+                        <td className="p-2 border-b border-zinc-900 whitespace-nowrap text-sky-200 font-semibold">{money(r._amount)}</td>
                         <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
-                          {dateAR(r.due_date)}
+                          {r._daysLate > 0 ? <span className="text-amber-300 font-semibold">{r._daysLate} días</span> : <span className="text-zinc-400">0</span>}
                         </td>
                         <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
-                          {r.installment_number}
+                          {r._lateFee > 0 ? <span className="text-amber-300 font-semibold">{money(r._lateFee)}</span> : <span className="text-zinc-400">—</span>}
                         </td>
+                        <td className="p-2 border-b border-zinc-900 whitespace-nowrap text-emerald-300 font-semibold">{money(r._totalToPay)}</td>
                         <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
-                          {freqLabel[r._frequency as keyof typeof freqLabel] ?? "—"}
-                        </td>
-                        <td className="p-2 border-b border-zinc-900 whitespace-nowrap text-sky-200 font-semibold">
-                          {money(r._amount)}
-                        </td>
-                        <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
-                          {r._daysLate > 0 ? (
-                            <span className="text-amber-300 font-semibold">{r._daysLate} días</span>
+                          {String(r.status ?? "pending") === "paid" ? (
+                            <span className="text-emerald-300 font-semibold">Pagado</span>
+                          ) : String(r.status ?? "pending") === "late" ? (
+                            <span className="text-amber-300 font-semibold">Atrasado</span>
                           ) : (
-                            <span className="text-zinc-400">0</span>
+                            <span className="text-zinc-200">Pendiente</span>
                           )}
                         </td>
-                        <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
-                          {r._lateFee > 0 ? (
-                            <span className="text-amber-300 font-semibold">{money(r._lateFee)}</span>
-                          ) : (
-                            <span className="text-zinc-400">—</span>
-                          )}
-                        </td>
-                        <td className="p-2 border-b border-zinc-900 whitespace-nowrap text-emerald-300 font-semibold">
-                          {money(r._totalToPay)}
-                        </td>
-                        <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
-                          <div className="flex gap-2">
-                            <button
-                              type="button"
-                              onClick={() => markInstallmentPaid(r.id)}
-                              disabled={savingCobranzaId === r.id}
-                              className="px-2 py-1 rounded bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60"
-                            >
-                              {savingCobranzaId === r.id ? "..." : "Pagó"}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => markInstallmentNoPay(r.id)}
-                              disabled={savingCobranzaId === r.id}
-                              className="px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 disabled:opacity-60"
-                            >
-                              No pagó
-                            </button>
-                          </div>
-                        </td>
+
+                        {role !== "admin" && (
+                          <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
+                            <div className="flex gap-2">
+                              <button
+                                type="button"
+                                onClick={() => markInstallmentPaid(r.id)}
+                                disabled={savingCobranzaId === r.id}
+                                className="px-2 py-1 rounded bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60"
+                              >
+                                {savingCobranzaId === r.id ? "..." : "Pagó"}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => markInstallmentNoPay(r.id)}
+                                disabled={savingCobranzaId === r.id}
+                                className="px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 disabled:opacity-60"
+                              >
+                                No pagó
+                              </button>
+                            </div>
+                          </td>
+                        )}
                       </tr>
                     ))
                   )}
@@ -1178,13 +1178,6 @@ const totalCobradoHoy = cobradasHoy.reduce(
             </div>
           </div>
         )}
-
-        {/* ADMIN: solo operaciones */}
-        {role === "admin" && (
-          <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 backdrop-blur p-4 sm:p-6 shadow-xl">
-            <OperationsTable role={role} operations={operations} onEdit={startEditOperation} onDelete={deleteOperation} />
-          </div>
-        )}
       </div>
 
       {/* MODAL EDIT (solo admin) */}
@@ -1194,10 +1187,7 @@ const totalCobradoHoy = cobradasHoy.reduce(
             <div className="flex items-center justify-between mb-4">
               <div>
                 <div className="text-lg font-semibold">Editar operación + cliente</div>
-                <div className="text-xs text-zinc-400">
-                  Cliente:{" "}
-                  {loadingClientForEdit ? "Cargando..." : fullName(editClientFirst || null, editClientLast || null)}
-                </div>
+                <div className="text-xs text-zinc-400">Cliente: {loadingClientForEdit ? "Cargando..." : fullName(editClientFirst || null, editClientLast || null)}</div>
               </div>
               <button
                 type="button"
@@ -1287,50 +1277,27 @@ const totalCobradoHoy = cobradasHoy.reduce(
 
               <div className="mb-3">
                 <div className="text-sm text-zinc-300 mb-2">{editType === "sale" ? "Qué se vendió" : "Motivo del préstamo"}</div>
-                <input
-                  className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
-                  value={editDetail}
-                  onChange={(e) => setEditDetail(e.target.value)}
-                />
+                <input className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800" value={editDetail} onChange={(e) => setEditDetail(e.target.value)} />
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
                 <div>
                   <div className="text-sm text-zinc-300 mb-2">Monto base</div>
-                  <input
-                    className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
-                    value={editBaseAmount}
-                    onChange={(e) => setEditBaseAmount(e.target.value)}
-                    inputMode="decimal"
-                  />
+                  <input className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800" value={editBaseAmount} onChange={(e) => setEditBaseAmount(e.target.value)} inputMode="decimal" />
                 </div>
                 <div>
                   <div className="text-sm text-zinc-300 mb-2">Interés (%)</div>
-                  <input
-                    className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
-                    value={editInterest}
-                    onChange={(e) => setEditInterest(e.target.value)}
-                    inputMode="decimal"
-                  />
+                  <input className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800" value={editInterest} onChange={(e) => setEditInterest(e.target.value)} inputMode="decimal" />
                 </div>
                 <div>
                   <div className="text-sm text-zinc-300 mb-2">Cuotas</div>
-                  <input
-                    className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
-                    value={editInstallments}
-                    onChange={(e) => setEditInstallments(e.target.value)}
-                    inputMode="numeric"
-                  />
+                  <input className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800" value={editInstallments} onChange={(e) => setEditInstallments(e.target.value)} inputMode="numeric" />
                 </div>
               </div>
 
               <div className="mb-4">
                 <div className="text-sm text-zinc-300 mb-2">Notas</div>
-                <textarea
-                  className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800 min-h-[90px]"
-                  value={editNotes}
-                  onChange={(e) => setEditNotes(e.target.value)}
-                />
+                <textarea className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800 min-h-[90px]" value={editNotes} onChange={(e) => setEditNotes(e.target.value)} />
               </div>
 
               <div className="flex gap-2">
@@ -1342,11 +1309,7 @@ const totalCobradoHoy = cobradasHoy.reduce(
                 >
                   {savingEdit ? "Guardando..." : "Guardar cambios"}
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setEditingOp(null)}
-                  className="px-4 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800"
-                >
+                <button type="button" onClick={() => setEditingOp(null)} className="px-4 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800">
                   Cancelar
                 </button>
               </div>
@@ -1409,25 +1372,15 @@ function OperationsTable({
                 const detail = op.operation_type === "sale" ? op.sale_item : op.loan_purpose
                 return (
                   <tr key={op.id} className="odd:bg-zinc-950/40 hover:bg-zinc-900/40 transition">
-                    {role === "admin" && (
-                      <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{op.seller_name ?? "Vendedor"}</td>
-                    )}
+                    {role === "admin" && <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{op.seller_name ?? "Vendedor"}</td>}
 
-                    <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
-                      {new Date(op.created_at).toLocaleString("es-AR")}
-                    </td>
+                    <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{new Date(op.created_at).toLocaleString("es-AR")}</td>
 
-                    <td className="p-2 border-b border-zinc-900 whitespace-nowrap text-emerald-300 font-semibold">
-                      {dateAR(op.first_due_date)}
-                    </td>
+                    <td className="p-2 border-b border-zinc-900 whitespace-nowrap text-emerald-300 font-semibold">{dateAR(op.first_due_date)}</td>
 
-                    <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
-                      {op.operation_type === "sale" ? "Venta" : "Préstamo"}
-                    </td>
+                    <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{op.operation_type === "sale" ? "Venta" : "Préstamo"}</td>
 
-                    <td className="p-2 border-b border-zinc-900 min-w-[220px]">
-                      {detail || <span className="text-zinc-500">—</span>}
-                    </td>
+                    <td className="p-2 border-b border-zinc-900 min-w-[220px]">{detail || <span className="text-zinc-500">—</span>}</td>
 
                     <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{freqLabel[op.frequency]}</td>
 
@@ -1435,9 +1388,7 @@ function OperationsTable({
 
                     <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{op.interest_percent}%</td>
 
-                    <td className="p-2 border-b border-zinc-900 whitespace-nowrap text-sky-300 font-semibold">
-                      {money(op.total_amount)}
-                    </td>
+                    <td className="p-2 border-b border-zinc-900 whitespace-nowrap text-sky-300 font-semibold">{money(op.total_amount)}</td>
 
                     <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{op.installments_count}</td>
 
@@ -1446,18 +1397,10 @@ function OperationsTable({
                     {canAdminActions && (
                       <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
                         <div className="flex gap-2">
-                          <button
-                            className="px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700"
-                            onClick={() => onEdit?.(op)}
-                            type="button"
-                          >
+                          <button className="px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700" onClick={() => onEdit?.(op)} type="button">
                             Editar
                           </button>
-                          <button
-                            className="px-2 py-1 rounded bg-red-600 hover:bg-red-500"
-                            onClick={() => onDelete?.(op.id)}
-                            type="button"
-                          >
+                          <button className="px-2 py-1 rounded bg-red-600 hover:bg-red-500" onClick={() => onDelete?.(op.id)} type="button">
                             Borrar
                           </button>
                         </div>
