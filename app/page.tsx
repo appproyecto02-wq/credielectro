@@ -45,8 +45,42 @@ type Operation = {
   loan_purpose: string | null
   notes: string | null
 
+  // (si existen en tu tabla)
+  late_fee_type?: "fixed_daily" | "percent_daily" | string | null
+  late_fee_value?: number | null
+
   // UI only
   seller_name?: string
+}
+
+type InstallmentStatus = "pending" | "paid" | "late" | string
+
+type InstallmentRow = {
+  id: string
+  operation_id: string
+  installment_number: number
+  due_date: string | null
+  amount: number | null
+  status: InstallmentStatus
+
+  // joined
+  operation?: {
+    id: string
+    seller_id: string
+    client_id: string | null
+    frequency: Operation["frequency"]
+    installment_amount: number
+    late_fee_type?: Operation["late_fee_type"]
+    late_fee_value?: Operation["late_fee_value"]
+  } | null
+
+  client?: {
+    id: string
+    first_name: string | null
+    last_name: string | null
+    phone: string | null
+    address: string | null
+  } | null
 }
 
 const freqLabel: Record<Operation["frequency"], string> = {
@@ -80,6 +114,46 @@ function dateAR(d: string | null | undefined) {
   }
 }
 
+function startOfToday() {
+  const now = new Date()
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate())
+}
+
+function daysLate(dueDateISO: string | null | undefined) {
+  if (!dueDateISO) return 0
+  const due = new Date(dueDateISO)
+  if (Number.isNaN(due.getTime())) return 0
+  const today = startOfToday()
+  const dueDay = new Date(due.getFullYear(), due.getMonth(), due.getDate())
+  const diffMs = today.getTime() - dueDay.getTime()
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
+  return Math.max(0, diffDays)
+}
+
+function computeLateFee(opts: {
+  installmentAmount: number
+  daysLate: number
+  lateFeeType?: string | null
+  lateFeeValue?: number | null
+}) {
+  const { installmentAmount, daysLate, lateFeeType, lateFeeValue } = opts
+  const v = Number(lateFeeValue ?? 0)
+  if (daysLate <= 0 || !Number.isFinite(v) || v <= 0) return 0
+
+  // fijo por día
+  if (!lateFeeType || lateFeeType === "fixed_daily") {
+    return v * daysLate
+  }
+
+  // porcentaje por día
+  if (lateFeeType === "percent_daily") {
+    return installmentAmount * (v / 100) * daysLate
+  }
+
+  // fallback: si viene algo raro, lo tratamos como fijo
+  return v * daysLate
+}
+
 // ---------- PAGE ----------
 export default function Page() {
   const router = useRouter()
@@ -91,9 +165,17 @@ export default function Page() {
   const [profile, setProfile] = useState<Profile | null>(null)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
 
+  // view mode
+  const [view, setView] = useState<"ops" | "cobranza">("ops")
+
   // seller data
   const [clients, setClients] = useState<Client[]>([])
   const [operations, setOperations] = useState<Operation[]>([])
+
+  // cobranza data
+  const [installmentsData, setInstallmentsData] = useState<InstallmentRow[]>([])
+  const [loadingCobranza, setLoadingCobranza] = useState(false)
+  const [savingCobranzaId, setSavingCobranzaId] = useState<string | null>(null)
 
   // form (solo seller)
   const [clientMode, setClientMode] = useState<"existing" | "new">("existing")
@@ -196,6 +278,7 @@ export default function Page() {
       await fetchOperations(user.id, r)
       if (r !== "admin") {
         await fetchClients(user.id)
+        await fetchCobranza(user.id) // pre-carga cobranza para que cambie rápido
       }
 
       setLoading(false)
@@ -236,9 +319,8 @@ export default function Page() {
   async function fetchOperations(currentUserId: string, currentRole: Role) {
     setErrorMsg(null)
 
-    // ✅ agregado first_due_date
     const baseSelect =
-      "id, created_at, first_due_date, seller_id, operation_type, frequency, client_id, base_amount, interest_percent, installments_count, total_amount, installment_amount, notes, sale_item, loan_purpose"
+      "id, created_at, first_due_date, seller_id, operation_type, frequency, client_id, base_amount, interest_percent, installments_count, total_amount, installment_amount, notes, sale_item, loan_purpose, late_fee_type, late_fee_value"
 
     let q = supabase.from("operations").select(baseSelect).order("created_at", { ascending: false })
     if (currentRole !== "admin") q = q.eq("seller_id", currentUserId)
@@ -253,7 +335,6 @@ export default function Page() {
 
     const ops: Operation[] = (res.data as any) ?? []
 
-    // Admin: mapear seller_id -> nombre vendedor
     if (currentRole === "admin") {
       const sellerIds = Array.from(new Set(ops.map((o) => o.seller_id).filter(Boolean)))
 
@@ -278,6 +359,107 @@ export default function Page() {
     }
 
     setOperations(ops)
+  }
+
+  async function fetchCobranza(sellerId: string) {
+    setLoadingCobranza(true)
+    setErrorMsg(null)
+    try {
+      // Trae cuotas + join con operación y cliente
+      // Nota: si en tu tabla installments no existe "amount", igual funciona (queda null).
+      const res = await supabase
+        .from("installments")
+        .select(
+          `
+          id,
+          operation_id,
+          installment_number,
+          due_date,
+          amount,
+          status,
+          operations:operation_id (
+            id,
+            seller_id,
+            client_id,
+            frequency,
+            installment_amount,
+            late_fee_type,
+            late_fee_value
+          ),
+          clients:operations!inner (
+            id
+          )
+        `
+        )
+
+      if (res.error) {
+        console.error(res.error)
+        setErrorMsg(res.error.message)
+        setInstallmentsData([])
+        return
+      }
+
+      // El select arriba no trae datos del cliente directo porque depende del join.
+      // Entonces hacemos un 2do paso: traemos clientes por ids que aparecen en operations.client_id
+      const rows = (res.data as any[]) ?? []
+      const opClientIds = Array.from(
+        new Set(rows.map((r) => r?.operations?.client_id).filter(Boolean) as string[])
+      )
+
+      let clientsMap = new Map<string, any>()
+      if (opClientIds.length) {
+        const cRes = await supabase
+          .from("clients")
+          .select("id, first_name, last_name, phone, address")
+          .in("id", opClientIds)
+
+        if (!cRes.error) {
+          for (const c of (cRes.data as any[]) ?? []) clientsMap.set(c.id, c)
+        }
+      }
+
+      // Filtrar: SOLO del vendedor logueado
+      const normalized: InstallmentRow[] = rows
+        .map((r) => {
+          const op = r?.operations ?? null
+          const clientId = op?.client_id ?? null
+          const client = clientId ? clientsMap.get(clientId) ?? null : null
+
+          return {
+            id: String(r.id),
+            operation_id: String(r.operation_id),
+            installment_number: Number(r.installment_number ?? 0),
+            due_date: r.due_date ?? null,
+            amount: r.amount ?? null,
+            status: (r.status ?? "pending") as InstallmentStatus,
+            operation: op
+              ? {
+                  id: String(op.id),
+                  seller_id: String(op.seller_id),
+                  client_id: op.client_id ?? null,
+                  frequency: op.frequency,
+                  installment_amount: Number(op.installment_amount ?? 0),
+                  late_fee_type: op.late_fee_type ?? "fixed_daily",
+                  late_fee_value: op.late_fee_value ?? 0,
+                }
+              : null,
+            client: client
+              ? {
+                  id: String(client.id),
+                  first_name: client.first_name ?? null,
+                  last_name: client.last_name ?? null,
+                  phone: client.phone ?? null,
+                  address: client.address ?? null,
+                }
+              : null,
+          }
+        })
+        .filter((r) => r.operation?.seller_id === sellerId)
+
+      setInstallmentsData(normalized)
+    } finally {
+      setLoadingCobranza(false)
+    }
   }
 
   async function signOut() {
@@ -324,7 +506,6 @@ export default function Page() {
     await fetchClients(userId)
     setSelectedClientId(newId)
 
-    // limpiar form cliente
     setFirstName("")
     setLastName("")
     setDni("")
@@ -353,7 +534,7 @@ export default function Page() {
         notes: notes.trim() || null,
         sale_item: operationType === "sale" ? (saleItem.trim() || null) : null,
         loan_purpose: operationType === "loan" ? (loanPurpose.trim() || null) : null,
-        // first_due_date lo calcula el trigger en Supabase ✅
+        // first_due_date y cuotas: lo maneja Supabase con triggers ✅
       }
 
       const res = await supabase.from("operations").insert(payload).select("id").single()
@@ -362,7 +543,6 @@ export default function Page() {
         return
       }
 
-      // reset form mínimo
       setSaleItem("")
       setLoanPurpose("")
       setBaseAmount("")
@@ -371,6 +551,7 @@ export default function Page() {
       setNotes("")
 
       await fetchOperations(userId, role)
+      await fetchCobranza(userId) // refrescar cobranza
       alert("Operación guardada")
     } finally {
       setSaving(false)
@@ -378,9 +559,7 @@ export default function Page() {
   }
 
   async function deleteOperation(opId: string) {
-    // ✅ SOLO ADMIN
     if (role !== "admin") return
-
     if (!confirm("¿Borrar operación?")) return
     const res = await supabase.from("operations").delete().eq("id", opId)
     if (res.error) {
@@ -390,8 +569,38 @@ export default function Page() {
     await fetchOperations(userId!, role)
   }
 
+  async function markInstallmentPaid(installmentId: string) {
+    if (!userId) return
+    setSavingCobranzaId(installmentId)
+    try {
+      const res = await supabase.from("installments").update({ status: "paid" }).eq("id", installmentId)
+      if (res.error) {
+        alert(res.error.message)
+        return
+      }
+      await fetchCobranza(userId)
+    } finally {
+      setSavingCobranzaId(null)
+    }
+  }
+
+  async function markInstallmentNoPay(installmentId: string) {
+    if (!userId) return
+    setSavingCobranzaId(installmentId)
+    try {
+      // Dejarlo en "late" ayuda a diferenciar, pero si preferís "pending" avisame.
+      const res = await supabase.from("installments").update({ status: "late" }).eq("id", installmentId)
+      if (res.error) {
+        alert(res.error.message)
+        return
+      }
+      await fetchCobranza(userId)
+    } finally {
+      setSavingCobranzaId(null)
+    }
+  }
+
   async function startEditOperation(op: Operation) {
-    // ✅ SOLO ADMIN
     if (role !== "admin") return
 
     setEditingOp(op)
@@ -440,7 +649,6 @@ export default function Page() {
   }
 
   async function saveEditOperation() {
-    // ✅ SOLO ADMIN
     if (role !== "admin") return
     if (!editingOp) return
 
@@ -495,6 +703,44 @@ export default function Page() {
     }
   }
 
+  // ---------- COBRANZA: dataset ordenado (opción 2) ----------
+  const cobranzaRows = useMemo(() => {
+    const rows = installmentsData
+      .filter((r) => (r.status ?? "pending") !== "paid")
+      .map((r) => {
+        const op = r.operation
+        const client = r.client
+        const amount = Number(r.amount ?? op?.installment_amount ?? 0)
+        const late = daysLate(r.due_date)
+        const fee = computeLateFee({
+          installmentAmount: amount,
+          daysLate: late,
+          lateFeeType: op?.late_fee_type ?? "fixed_daily",
+          lateFeeValue: op?.late_fee_value ?? 0,
+        })
+        const totalToPay = amount + fee
+
+        return {
+          ...r,
+          _amount: amount,
+          _daysLate: late,
+          _lateFee: fee,
+          _totalToPay: totalToPay,
+          _clientName: fullName(client?.first_name ?? null, client?.last_name ?? null),
+          _clientPhone: client?.phone ?? null,
+          _clientAddress: client?.address ?? null,
+          _frequency: op?.frequency ?? "weekly",
+        }
+      })
+      .sort((a, b) => {
+        const da = a.due_date ? new Date(a.due_date).getTime() : 0
+        const db = b.due_date ? new Date(b.due_date).getTime() : 0
+        return da - db
+      })
+
+    return rows
+  }, [installmentsData])
+
   // ---------- UI ----------
   if (loading) {
     return (
@@ -508,7 +754,7 @@ export default function Page() {
     <div className="min-h-screen bg-gradient-to-br from-zinc-950 via-zinc-900 to-black text-zinc-100">
       <div className="max-w-6xl mx-auto p-4 sm:p-8">
         {/* Top bar */}
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-5">
           <div>
             <div className="text-2xl font-semibold tracking-tight">CrediElectro Dyn</div>
             <div className="text-sm text-zinc-400">
@@ -519,10 +765,13 @@ export default function Page() {
           <div className="flex gap-2">
             <button
               type="button"
-              onClick={() => fetchOperations(userId!, role)}
+              onClick={async () => {
+                await fetchOperations(userId!, role)
+                if (role !== "admin") await fetchCobranza(userId!)
+              }}
               className="px-3 py-2 rounded-xl bg-zinc-900/70 hover:bg-zinc-800 border border-zinc-800 backdrop-blur"
             >
-              Refrescar
+              Actualizar
             </button>
             <button type="button" onClick={signOut} className="px-3 py-2 rounded-xl bg-red-600 hover:bg-red-500">
               Cerrar sesión
@@ -530,12 +779,41 @@ export default function Page() {
           </div>
         </div>
 
+        {/* Navegación interna (solo vendedor) */}
+        {role !== "admin" && (
+          <div className="mb-6">
+            <div className="inline-flex rounded-2xl border border-zinc-800 bg-zinc-950/60 backdrop-blur p-1">
+              <button
+                type="button"
+                onClick={() => setView("ops")}
+                className={`px-4 py-2 rounded-xl text-sm font-semibold transition ${
+                  view === "ops" ? "bg-sky-600 text-white" : "text-zinc-200 hover:bg-zinc-900"
+                }`}
+              >
+                Operaciones
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  setView("cobranza")
+                  await fetchCobranza(userId!)
+                }}
+                className={`px-4 py-2 rounded-xl text-sm font-semibold transition ${
+                  view === "cobranza" ? "bg-emerald-600 text-white" : "text-zinc-200 hover:bg-zinc-900"
+                }`}
+              >
+                Cobranza
+              </button>
+            </div>
+          </div>
+        )}
+
         {errorMsg && (
           <div className="mb-4 p-3 rounded-xl border border-red-900 bg-red-950 text-red-200">{errorMsg}</div>
         )}
 
-        {/* SELLER FORM */}
-        {role !== "admin" && (
+        {/* SELLER */}
+        {role !== "admin" && view === "ops" && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* Form */}
             <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 backdrop-blur p-4 sm:p-6 shadow-xl">
@@ -673,7 +951,7 @@ export default function Page() {
               {/* Números */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
                 <div>
-                  <div className="text-sm text-zinc-300 mb-2">Monto base</div>
+                  <div className="text-sm text-zinc-300 mb-2">Base de Monto</div>
                   <input
                     className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
                     placeholder="Ej: 50000"
@@ -744,6 +1022,120 @@ export default function Page() {
           </div>
         )}
 
+        {/* COBRANZA (integrada) */}
+        {role !== "admin" && view === "cobranza" && (
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 backdrop-blur p-4 sm:p-6 shadow-xl">
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <div className="text-lg font-semibold">Cobranza</div>
+                <div className="text-xs text-zinc-400">
+                  Pendientes + Atrasadas (ordenadas por vencimiento)
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => fetchCobranza(userId!)}
+                className="px-3 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800"
+                disabled={loadingCobranza}
+              >
+                {loadingCobranza ? "Cargando..." : "Refrescar"}
+              </button>
+            </div>
+
+            <div className="overflow-x-auto border border-zinc-800 rounded-xl bg-zinc-950/40 backdrop-blur">
+              <table className="min-w-[1200px] w-full text-sm table-auto border-collapse">
+                <thead className="bg-zinc-900">
+                  <tr>
+                    <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Cliente</th>
+                    <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Vence</th>
+                    <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Cuota #</th>
+                    <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Frecuencia</th>
+                    <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Monto</th>
+                    <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Atraso</th>
+                    <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Mora</th>
+                    <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Total a cobrar</th>
+                    <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Acciones</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {cobranzaRows.length === 0 ? (
+                    <tr>
+                      <td className="p-3 text-zinc-400" colSpan={9}>
+                        No hay cuotas pendientes 🎉
+                      </td>
+                    </tr>
+                  ) : (
+                    cobranzaRows.map((r) => (
+                      <tr key={r.id} className="odd:bg-zinc-950/40 hover:bg-zinc-900/40 transition">
+                        <td className="p-2 border-b border-zinc-900">
+                          <div className="font-semibold">{r._clientName}</div>
+                          <div className="text-xs text-zinc-400">
+                            {r._clientPhone ? `📞 ${r._clientPhone}` : ""}{" "}
+                            {r._clientAddress ? `• 📍 ${r._clientAddress}` : ""}
+                          </div>
+                        </td>
+                        <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
+                          {dateAR(r.due_date)}
+                        </td>
+                        <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
+                          {r.installment_number}
+                        </td>
+                        <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
+                          {freqLabel[r._frequency as any] ?? "—"}
+                        </td>
+                        <td className="p-2 border-b border-zinc-900 whitespace-nowrap text-sky-200 font-semibold">
+                          {money(r._amount)}
+                        </td>
+                        <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
+                          {r._daysLate > 0 ? (
+                            <span className="text-amber-300 font-semibold">{r._daysLate} días</span>
+                          ) : (
+                            <span className="text-zinc-400">0</span>
+                          )}
+                        </td>
+                        <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
+                          {r._lateFee > 0 ? (
+                            <span className="text-amber-300 font-semibold">{money(r._lateFee)}</span>
+                          ) : (
+                            <span className="text-zinc-400">—</span>
+                          )}
+                        </td>
+                        <td className="p-2 border-b border-zinc-900 whitespace-nowrap text-emerald-300 font-semibold">
+                          {money(r._totalToPay)}
+                        </td>
+                        <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => markInstallmentPaid(r.id)}
+                              disabled={savingCobranzaId === r.id}
+                              className="px-2 py-1 rounded bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60"
+                            >
+                              {savingCobranzaId === r.id ? "..." : "Pagó"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => markInstallmentNoPay(r.id)}
+                              disabled={savingCobranzaId === r.id}
+                              className="px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 disabled:opacity-60"
+                            >
+                              No pagó
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="mt-3 text-xs text-zinc-500">
+              Nota: la mora se calcula con <b>late_fee_type</b> y <b>late_fee_value</b> de la operación (fijo diario o % diario).
+            </div>
+          </div>
+        )}
+
         {/* ADMIN: solo operaciones */}
         {role === "admin" && (
           <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 backdrop-blur p-4 sm:p-6 shadow-xl">
@@ -761,9 +1153,7 @@ export default function Page() {
                 <div className="text-lg font-semibold">Editar operación + cliente</div>
                 <div className="text-xs text-zinc-400">
                   Cliente:{" "}
-                  {loadingClientForEdit
-                    ? "Cargando..."
-                    : fullName(editClientFirst || null, editClientLast || null)}
+                  {loadingClientForEdit ? "Cargando..." : fullName(editClientFirst || null, editClientLast || null)}
                 </div>
               </div>
               <button
@@ -951,9 +1341,7 @@ function OperationsTable({
             <tr>
               {role === "admin" && <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Vendedor</th>}
               <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Fecha</th>
-              {/* ✅ NUEVA COLUMNA */}
               <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">1ra cuota</th>
-
               <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Tipo</th>
               <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Detalle</th>
               <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Frecuencia</th>
@@ -986,7 +1374,6 @@ function OperationsTable({
                       {new Date(op.created_at).toLocaleString("es-AR")}
                     </td>
 
-                    {/* ✅ 1RA CUOTA */}
                     <td className="p-2 border-b border-zinc-900 whitespace-nowrap text-emerald-300 font-semibold">
                       {dateAR(op.first_due_date)}
                     </td>
