@@ -707,7 +707,7 @@ export default function Page() {
   // ---------- COBRANZA: dataset ordenado (opción 2) ----------
   const cobranzaRows = useMemo(() => {
     const rows = installmentsData
-      .filter((r) => (r.status ?? "pending") !== "paid")
+      .filter((r) => role === "admin" ? true : (r.status ?? "pending") !== "paid")
       .map((r) => {
         const op = r.operation
         const client = r.client
