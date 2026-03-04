@@ -1081,7 +1081,7 @@ export default function Page() {
                           {r.installment_number}
                         </td>
                         <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
-                          {freqLabel[r._frequency as any] ?? "—"}
+                          {freqLabel[r._frequency as keyof typeof freqLabel] ?? "—"}
                         </td>
                         <td className="p-2 border-b border-zinc-900 whitespace-nowrap text-sky-200 font-semibold">
                           {money(r._amount)}
