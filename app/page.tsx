@@ -361,119 +361,99 @@ export default function Page() {
     setOperations(ops)
   }
 
-  async function fetchCobranza(currentUserId: string, currentRole: Role) {
-    setLoadingCobranza(true)
-    setErrorMsg(null)
-
-    try {
-      const res = await supabase
-        .from("installments")
-        .select(
-          `
-          paid_at,
-          id,
-          operation_id,
-          installment_number,
-          due_date,
-          amount,
-          status,
-          operations:operation_id (
-            id,
-            seller_id,
-            client_id,
-            frequency,
-            installment_amount,
-            late_fee_type,
-            late_fee_value
-          )
+async function fetchCobranza(currentUserId: string, currentRole: Role) {
+  setLoadingCobranza(true)
+  setErrorMsg(null)
+  try {
+    let q = supabase
+      .from("installments")
+      .select(
         `
+        id,
+        operation_id,
+        installment_number,
+        due_date,
+        amount,
+        status,
+        paid_at,
+        operations:operation_id (
+          id,
+          seller_id,
+          client_id,
+          frequency,
+          installment_amount,
+          late_fee_type,
+          late_fee_value,
+          clients:client_id (
+            id,
+            first_name,
+            last_name,
+            phone,
+            address
+          )
         )
-        .order("due_date", { ascending: true })
+      `
+      )
 
-      if (res.error) {
-        console.error(res.error)
-        setErrorMsg(res.error.message)
-        setInstallmentsData([])
-        return
-      }
-
-      const rows = (res.data as any[]) ?? []
-
-      // clientes (por client_id dentro de operations)
-      const opClientIds = Array.from(new Set(rows.map((r) => r?.operations?.client_id).filter(Boolean) as string[]))
-
-      const clientsMap = new Map<string, any>()
-      if (opClientIds.length) {
-        const cRes = await supabase.from("clients").select("id, first_name, last_name, phone, address").in("id", opClientIds)
-        if (!cRes.error) {
-          for (const c of (cRes.data as any[]) ?? []) clientsMap.set(c.id, c)
-        }
-      }
-
-      // vendedores (solo admin)
-      const sellerMap = new Map<string, string>()
-      if (currentRole === "admin") {
-        const sellerIds = Array.from(new Set(rows.map((r) => r?.operations?.seller_id).filter(Boolean) as string[]))
-        if (sellerIds.length) {
-          const sRes = await supabase.from("profiles").select("id, name").in("id", sellerIds)
-          if (!sRes.error) {
-            for (const s of (sRes.data as any[]) ?? []) {
-              sellerMap.set(String(s.id), String(s.name ?? "").trim() || "Vendedor")
-            }
-          }
-        }
-      }
-
-      const normalized: InstallmentRow[] = rows.map((r) => {
-        const op = r?.operations ?? null
-        const clientId = op?.client_id ?? null
-        const client = clientId ? clientsMap.get(clientId) ?? null : null
-
-        return {
-          id: String(r.id),
-          operation_id: String(r.operation_id),
-          installment_number: Number(r.installment_number ?? 0),
-          due_date: r.due_date ?? null,
-          amount: r.amount ?? null,
-          status: (r.status ?? "pending") as InstallmentStatus,
-          paid_at: r.paid_at ?? null,
-
-          operation: op
-            ? {
-                id: String(op.id),
-                seller_id: String(op.seller_id),
-                client_id: op.client_id ?? null,
-                frequency: op.frequency,
-                installment_amount: Number(op.installment_amount ?? 0),
-                late_fee_type: op.late_fee_type ?? "fixed_daily",
-                late_fee_value: op.late_fee_value ?? 0,
-              }
-            : null,
-
-          client: client
-            ? {
-                id: String(client.id),
-                first_name: client.first_name ?? null,
-                last_name: client.last_name ?? null,
-                phone: client.phone ?? null,
-                address: client.address ?? null,
-              }
-            : null,
-
-          seller_name: currentRole === "admin" ? sellerMap.get(String(op?.seller_id ?? "")) ?? "Vendedor" : null,
-        }
-      })
-
-      const filtered =
-        currentRole === "admin"
-          ? normalized
-          : normalized.filter((r) => r.operation?.seller_id === currentUserId)
-
-      setInstallmentsData(filtered)
-    } finally {
-      setLoadingCobranza(false)
+    // ✅ Solo el vendedor filtra por lo suyo
+    if (currentRole !== "admin") {
+      q = q.eq("operations.seller_id", currentUserId)
     }
+
+    const res = await q
+
+    if (res.error) {
+      console.error(res.error)
+      setErrorMsg(res.error.message)
+      setInstallmentsData([])
+      return
+    }
+
+    const rows = (res.data as any[]) ?? []
+
+    // Normalizamos al tipo InstallmentRow
+    const normalized: InstallmentRow[] = rows.map((r) => {
+      const op = r?.operations ?? null
+      const c = op?.clients ?? null
+
+      return {
+        id: String(r.id),
+        operation_id: String(r.operation_id),
+        installment_number: Number(r.installment_number ?? 0),
+        due_date: r.due_date ?? null,
+        amount: r.amount ?? null,
+        status: (r.status ?? "pending") as InstallmentStatus,
+        paid_at: r.paid_at ?? null,
+
+        operation: op
+          ? {
+              id: String(op.id),
+              seller_id: String(op.seller_id),
+              client_id: op.client_id ?? null,
+              frequency: op.frequency,
+              installment_amount: Number(op.installment_amount ?? 0),
+              late_fee_type: op.late_fee_type ?? "fixed_daily",
+              late_fee_value: op.late_fee_value ?? 0,
+            }
+          : null,
+
+        client: c
+          ? {
+              id: String(c.id),
+              first_name: c.first_name ?? null,
+              last_name: c.last_name ?? null,
+              phone: c.phone ?? null,
+              address: c.address ?? null,
+            }
+          : null,
+      }
+    })
+
+    setInstallmentsData(normalized)
+  } finally {
+    setLoadingCobranza(false)
   }
+}
 
   async function signOut() {
     await supabase.auth.signOut()
@@ -564,7 +544,7 @@ export default function Page() {
       setNotes("")
 
       await fetchOperations(userId, role)
-      await fetchCobranza(userId, role)
+      await fetchCobranza(userId!, role)
       alert("Operación guardada")
     } finally {
       setSaving(false)
@@ -757,7 +737,7 @@ export default function Page() {
         alert(res.error.message)
         return
       }
-      await fetchCobranza(userId, role)
+      await fetchCobranza(userId!, role)
     } finally {
       setSavingCobranzaId(null)
     }
@@ -777,7 +757,7 @@ export default function Page() {
         alert(res.error.message)
         return
       }
-      await fetchCobranza(userId, role)
+      await fetchCobranza(userId!, role)
     } finally {
       setSavingCobranzaId(null)
     }
@@ -1088,12 +1068,72 @@ export default function Page() {
         )}
 
         {/* ADMIN OPS */}
-        {role === "admin" && view === "ops" && (
+        {role === "admin" &&  (
           <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 backdrop-blur p-4 sm:p-6 shadow-xl">
             <OperationsTable role={role} operations={operations} onEdit={startEditOperation} onDelete={deleteOperation} />
           </div>
         )}
+        <div className="mt-6 rounded-2xl border border-zinc-800 bg-zinc-950/60 backdrop-blur p-4 sm:p-6 shadow-xl">
+    <div className="flex items-center justify-between mb-3">
+      <div>
+        <div className="text-lg font-semibold">Cobranza (vista admin)</div>
+        <div className="text-xs text-zinc-400">Pendientes + Pagadas (control general)</div>
+      </div>
+      <button
+        type="button"
+        onClick={() => fetchCobranza(userId!, role)}
+        className="px-3 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800"
+        disabled={loadingCobranza}
+      >
+        {loadingCobranza ? "Cargando..." : "Refrescar"}
+      </button>
+    </div>
 
+    <div className="overflow-x-auto border border-zinc-800 rounded-xl bg-zinc-950/40 backdrop-blur">
+      <table className="min-w-[1200px] w-full text-sm table-auto border-collapse">
+        <thead className="bg-zinc-900">
+          <tr>
+            <th className="text-left p-2 border-b border-zinc-800">Cliente</th>
+            <th className="text-left p-2 border-b border-zinc-800">Vence</th>
+            <th className="text-left p-2 border-b border-zinc-800">Cuota #</th>
+            <th className="text-left p-2 border-b border-zinc-800">Estado</th>
+            <th className="text-left p-2 border-b border-zinc-800">Monto</th>
+            <th className="text-left p-2 border-b border-zinc-800">Pagado el</th>
+          </tr>
+        </thead>
+        <tbody>
+          {installmentsData.length === 0 ? (
+            <tr>
+              <td className="p-3 text-zinc-400" colSpan={6}>No hay datos de cobranza.</td>
+            </tr>
+          ) : (
+            installmentsData.map((r) => (
+              <tr key={r.id} className="odd:bg-zinc-950/40 hover:bg-zinc-900/40 transition">
+                <td className="p-2 border-b border-zinc-900">
+                  <div className="font-semibold">{fullName(r.client?.first_name, r.client?.last_name)}</div>
+                  <div className="text-xs text-zinc-400">
+                    {r.client?.phone ? 📞 ${r.client.phone} : ""} {r.client?.address ? • 📍 ${r.client.address} : ""}
+                  </div>
+                </td>
+                <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{dateAR(r.due_date)}</td>
+                <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{r.installment_number}</td>
+                <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
+                  {String(r.status)}
+                </td>
+                <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
+                  {money(Number(r.amount ?? r.operation?.installment_amount ?? 0))}
+                </td>
+                <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
+                  {r.paid_at ? dateAR(r.paid_at) : "—"}
+                </td>
+              </tr>
+            ))
+          )}
+        </tbody>
+      </table>
+    </div>
+  </div>
+)}
         {/* COBRANZA (integrada) */}
         {view === "cobranza" && (
           <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 backdrop-blur p-4 sm:p-6 shadow-xl">
