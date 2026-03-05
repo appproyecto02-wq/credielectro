@@ -1135,7 +1135,7 @@ async function fetchCobranza(currentUserId: string, currentRole: Role) {
   </div>
 )}
         {/* COBRANZA (integrada) */}
-        {view === "cobranza" || role === "admin") && (
+        {(view === "cobranza" || role === "admin") && (
           <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 backdrop-blur p-4 sm:p-6 shadow-xl">
             <div className="flex items-center justify-between mb-3">
               <div>
