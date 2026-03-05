@@ -362,6 +362,7 @@ export default function Page() {
   }
 
 async function fetchCobranza(currentUserId: string, currentRole: Role) {
+  console.log("FETCH COBRANZA ->", { currentUserId, currentRole })
   setLoadingCobranza(true)
   setErrorMsg(null)
   try {
@@ -401,7 +402,7 @@ async function fetchCobranza(currentUserId: string, currentRole: Role) {
     }
 
     const res = await q
-
+    console.log("COBRANZA RES ->", { data: res.data, error: res.error })
     if (res.error) {
       console.error(res.error)
       setErrorMsg(res.error.message)
