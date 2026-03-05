@@ -1103,10 +1103,11 @@ fetchCobranza(userId as string, role)
             <OperationsTable role={role} operations={operations} onEdit={startEditOperation} onDelete={deleteOperation} />
           </div>
         )}
+        {role === "admin" && (
         <div className="mt-6 rounded-2xl border border-zinc-800 bg-zinc-950/60 backdrop-blur p-4 sm:p-6 shadow-xl">
     <div className="flex items-center justify-between mb-3">
       <div>
-        <div className="text-lg font-semibold">Cobranza (vista admin)</div>
+        <div className="text-lg font-semibold">Cobranza (vista admin)</div> 
         <div className="text-xs text-zinc-400">Pendientes + Pagadas (control general)</div>
       </div>
       <button
@@ -1118,7 +1119,7 @@ fetchCobranza(userId as string, role)
         {loadingCobranza ? "Cargando..." : "Refrescar"}
       </button>
     </div>
-
+      
     <div className="overflow-x-auto border border-zinc-800 rounded-xl bg-zinc-950/40 backdrop-blur">
       <table className="min-w-[1200px] w-full text-sm table-auto border-collapse">
         <thead className="bg-zinc-900">
@@ -1184,7 +1185,7 @@ fetchCobranza(userId as string, role)
       </table>
     </div>
   </div>
-]
+        )}
         {/* COBRANZA (integrada) */}
         {(view === "cobranza" && role === "admin") && (
           <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 backdrop-blur p-4 sm:p-6 shadow-xl">
