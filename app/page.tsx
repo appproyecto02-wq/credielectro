@@ -360,16 +360,20 @@ export default function Page() {
 
     setOperations(ops)
   }
-
+function todayISO() {
+  const d = new Date()
+  return d.toISOString().split("T")[0]
+}
 async function fetchCobranza(currentUserId: string, currentRole: Role) {
-  console.log("FETCH COBRANZA ->", { currentUserId, currentRole })
   setLoadingCobranza(true)
   setErrorMsg(null)
+
   try {
+    const today = todayISO()
+
     let q = supabase
       .from("installments")
-      .select(
-        `
+      .select(`
         id,
         operation_id,
         installment_number,
@@ -393,24 +397,28 @@ async function fetchCobranza(currentUserId: string, currentRole: Role) {
             address
           )
         )
-      `
-      )
+      `)
 
-    // ✅ Solo el vendedor filtra por lo suyo
+    // ✅ Si NO es admin (seller/cobrador): solo lo suyo + hoy y atrasadas + NO pagadas
     if (currentRole !== "admin") {
-      q = q.eq("operations.seller_id", currentUserId)
+      q = q
+        .eq("operations.seller_id", currentUserId)
+        .neq("status", "paid")
+        .lte("due_date", today)
     }
 
+    // Orden por vencimiento
+    q = q.order("due_date", { ascending: true })
+
     const res = await q
-    console.log("COBRANZA RES ->", { data: res.data, error: res.error })
     if (res.error) {
-      console.error(res.error)
+      console.error("fetchCobranza error:", res.error)
       setErrorMsg(res.error.message)
       setInstallmentsData([])
       return
     }
 
-    const rows = (res.data as any[]) ?? []
+    const rows = ((res.data as any[]) ?? []) as any[]
 
     // Normalizamos al tipo InstallmentRow
     const normalized: InstallmentRow[] = rows.map((r) => {
@@ -451,11 +459,32 @@ async function fetchCobranza(currentUserId: string, currentRole: Role) {
     })
 
     setInstallmentsData(normalized)
+  } catch (e: any) {
+    console.error("fetchCobranza exception:", e)
+    setErrorMsg(e?.message ?? "Error inesperado")
+    setInstallmentsData([])
   } finally {
     setLoadingCobranza(false)
   }
 }
+async function payInstallment(id: string) {
+  const { error } = await supabase
+    .from("installments")
+    .update({
+      status: "paid",
+      paid_at: new Date().toISOString(),
+    })
+    .eq("id", id)
 
+  if (error) {
+  alert("Error al registrar pago")
+  console.error(error)
+  return
+}
+
+// refresca tabla
+fetchCobranza(userId as string, role)
+}
   async function signOut() {
     await supabase.auth.signOut()
     router.replace("/login")
@@ -1139,8 +1168,15 @@ async function fetchCobranza(currentUserId: string, currentRole: Role) {
         </td>
 
         <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
-          {r.paid_at ? dateAR(r.paid_at) : "—"}
-        </td>
+        {r.status !== "paid" && (
+        <button
+      onClick={() => payInstallment(r.id)}
+      className="px-3 py-1 bg-green-600 hover:bg-green-700 rounded text-white text-xs"
+    >
+      Pagado
+    </button>
+  )}
+</td>
       </tr>
     ))
   )}
@@ -1150,7 +1186,7 @@ async function fetchCobranza(currentUserId: string, currentRole: Role) {
   </div>
 ]
         {/* COBRANZA (integrada) */}
-        {(view === "cobranza" || role === "admin") && (
+        {(view === "cobranza" && role === "admin") && (
           <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 backdrop-blur p-4 sm:p-6 shadow-xl">
             <div className="flex items-center justify-between mb-3">
               <div>
