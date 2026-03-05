@@ -48,20 +48,22 @@ type Operation = {
   late_fee_type?: "fixed_daily" | "percent_daily" | string | null
   late_fee_value?: number | null
 
+  // UI only
   seller_name?: string
 }
 
 type InstallmentStatus = "pending" | "paid" | "late" | string
 
 type InstallmentRow = {
-  paid_at: any
   id: string
   operation_id: string
   installment_number: number
   due_date: string | null
   amount: number | null
   status: InstallmentStatus
+  paid_at: string | null
 
+  // joined / computed
   operation?: {
     id: string
     seller_id: string
@@ -79,6 +81,8 @@ type InstallmentRow = {
     phone: string | null
     address: string | null
   } | null
+
+  seller_name?: string | null
 }
 
 const freqLabel: Record<Operation["frequency"], string> = {
@@ -112,6 +116,15 @@ function dateAR(d: string | null | undefined) {
   }
 }
 
+function dateTimeAR(d: string | null | undefined) {
+  if (!d) return "—"
+  try {
+    return new Date(d).toLocaleString("es-AR")
+  } catch {
+    return "—"
+  }
+}
+
 function startOfToday() {
   const now = new Date()
   return new Date(now.getFullYear(), now.getMonth(), now.getDate())
@@ -140,6 +153,7 @@ function computeLateFee(opts: {
 
   if (!lateFeeType || lateFeeType === "fixed_daily") return v * daysLate
   if (lateFeeType === "percent_daily") return installmentAmount * (v / 100) * daysLate
+
   return v * daysLate
 }
 
@@ -147,21 +161,26 @@ function computeLateFee(opts: {
 export default function Page() {
   const router = useRouter()
 
+  // auth / profile
   const [loading, setLoading] = useState(true)
   const [userId, setUserId] = useState<string | null>(null)
   const [role, setRole] = useState<Role>("seller")
   const [profile, setProfile] = useState<Profile | null>(null)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
 
+  // view mode (admin y seller)
   const [view, setView] = useState<"ops" | "cobranza">("ops")
 
+  // seller data
   const [clients, setClients] = useState<Client[]>([])
   const [operations, setOperations] = useState<Operation[]>([])
 
+  // cobranza data
   const [installmentsData, setInstallmentsData] = useState<InstallmentRow[]>([])
   const [loadingCobranza, setLoadingCobranza] = useState(false)
   const [savingCobranzaId, setSavingCobranzaId] = useState<string | null>(null)
 
+  // form (solo seller)
   const [clientMode, setClientMode] = useState<"existing" | "new">("existing")
   const [selectedClientId, setSelectedClientId] = useState<string>("")
 
@@ -190,6 +209,7 @@ export default function Page() {
     return n || 1
   }, [installments])
 
+  // preview total/cuota (solo UI)
   const previewTotal = useMemo(() => {
     const total = baseAmountNum * (1 + interestPercentNum / 100)
     return Math.max(0, total)
@@ -202,6 +222,7 @@ export default function Page() {
 
   // ---------- ADMIN EDIT MODAL ----------
   const [editingOp, setEditingOp] = useState<Operation | null>(null)
+
   const [editType, setEditType] = useState<Operation["operation_type"]>("sale")
   const [editFrequency, setEditFrequency] = useState<Operation["frequency"]>("weekly")
   const [editBaseAmount, setEditBaseAmount] = useState("")
@@ -256,11 +277,10 @@ export default function Page() {
       })
 
       await fetchOperations(user.id, r)
-      await fetchCobranza(user.id, r)
-
       if (r !== "admin") {
         await fetchClients(user.id)
       }
+      await fetchCobranza(user.id, r)
 
       setLoading(false)
     }
@@ -318,7 +338,6 @@ export default function Page() {
 
     if (currentRole === "admin") {
       const sellerIds = Array.from(new Set(ops.map((o) => o.seller_id).filter(Boolean)))
-
       if (sellerIds.length) {
         const sellersRes = await supabase.from("profiles").select("id, name").in("id", sellerIds)
 
@@ -342,21 +361,22 @@ export default function Page() {
     setOperations(ops)
   }
 
-  async function fetchCobranza(sellerId: string, currentRole: Role) {
+  async function fetchCobranza(currentUserId: string, currentRole: Role) {
     setLoadingCobranza(true)
     setErrorMsg(null)
+
     try {
       const res = await supabase
         .from("installments")
         .select(
           `
+          paid_at,
           id,
           operation_id,
           installment_number,
           due_date,
           amount,
           status,
-          paid_at,
           operations:operation_id (
             id,
             seller_id,
@@ -368,6 +388,7 @@ export default function Page() {
           )
         `
         )
+        .order("due_date", { ascending: true })
 
       if (res.error) {
         console.error(res.error)
@@ -378,6 +399,7 @@ export default function Page() {
 
       const rows = (res.data as any[]) ?? []
 
+      // clientes (por client_id dentro de operations)
       const opClientIds = Array.from(new Set(rows.map((r) => r?.operations?.client_id).filter(Boolean) as string[]))
 
       const clientsMap = new Map<string, any>()
@@ -385,6 +407,20 @@ export default function Page() {
         const cRes = await supabase.from("clients").select("id, first_name, last_name, phone, address").in("id", opClientIds)
         if (!cRes.error) {
           for (const c of (cRes.data as any[]) ?? []) clientsMap.set(c.id, c)
+        }
+      }
+
+      // vendedores (solo admin)
+      const sellerMap = new Map<string, string>()
+      if (currentRole === "admin") {
+        const sellerIds = Array.from(new Set(rows.map((r) => r?.operations?.seller_id).filter(Boolean) as string[]))
+        if (sellerIds.length) {
+          const sRes = await supabase.from("profiles").select("id, name").in("id", sellerIds)
+          if (!sRes.error) {
+            for (const s of (sRes.data as any[]) ?? []) {
+              sellerMap.set(String(s.id), String(s.name ?? "").trim() || "Vendedor")
+            }
+          }
         }
       }
 
@@ -401,6 +437,7 @@ export default function Page() {
           amount: r.amount ?? null,
           status: (r.status ?? "pending") as InstallmentStatus,
           paid_at: r.paid_at ?? null,
+
           operation: op
             ? {
                 id: String(op.id),
@@ -412,6 +449,7 @@ export default function Page() {
                 late_fee_value: op.late_fee_value ?? 0,
               }
             : null,
+
           client: client
             ? {
                 id: String(client.id),
@@ -421,11 +459,15 @@ export default function Page() {
                 address: client.address ?? null,
               }
             : null,
+
+          seller_name: currentRole === "admin" ? sellerMap.get(String(op?.seller_id ?? "")) ?? "Vendedor" : null,
         }
       })
 
       const filtered =
-        currentRole === "admin" ? normalized : normalized.filter((r) => r.operation?.seller_id === sellerId)
+        currentRole === "admin"
+          ? normalized
+          : normalized.filter((r) => r.operation?.seller_id === currentUserId)
 
       setInstallmentsData(filtered)
     } finally {
@@ -505,6 +547,7 @@ export default function Page() {
         notes: notes.trim() || null,
         sale_item: operationType === "sale" ? (saleItem.trim() || null) : null,
         loan_purpose: operationType === "loan" ? (loanPurpose.trim() || null) : null,
+        // first_due_date + installments: triggers en Supabase ✅
       }
 
       const res = await supabase.from("operations").insert(payload).select("id").single()
@@ -537,36 +580,7 @@ export default function Page() {
       return
     }
     await fetchOperations(userId!, role)
-  }
-
-  async function markInstallmentPaid(installmentId: string) {
-    if (!userId) return
-    setSavingCobranzaId(installmentId)
-    try {
-      const res = await supabase.from("installments").update({ status: "paid" }).eq("id", installmentId)
-      if (res.error) {
-        alert(res.error.message)
-        return
-      }
-      await fetchCobranza(userId, role)
-    } finally {
-      setSavingCobranzaId(null)
-    }
-  }
-
-  async function markInstallmentNoPay(installmentId: string) {
-    if (!userId) return
-    setSavingCobranzaId(installmentId)
-    try {
-      const res = await supabase.from("installments").update({ status: "late" }).eq("id", installmentId)
-      if (res.error) {
-        alert(res.error.message)
-        return
-      }
-      await fetchCobranza(userId, role)
-    } finally {
-      setSavingCobranzaId(null)
-    }
+    await fetchCobranza(userId!, role)
   }
 
   async function startEditOperation(op: Operation) {
@@ -595,7 +609,12 @@ export default function Page() {
 
     setLoadingClientForEdit(true)
     try {
-      const cRes = await supabase.from("clients").select("id, first_name, last_name, dni, phone, address").eq("id", cid).maybeSingle()
+      const cRes = await supabase
+        .from("clients")
+        .select("id, first_name, last_name, dni, phone, address")
+        .eq("id", cid)
+        .maybeSingle()
+
       if (cRes.error) {
         alert(cRes.error.message)
         return
@@ -661,16 +680,17 @@ export default function Page() {
 
       setEditingOp(null)
       await fetchOperations(userId!, role)
+      await fetchCobranza(userId!, role)
       alert("Operación y cliente actualizados")
     } finally {
       setSavingEdit(false)
     }
   }
 
-  // ---------- COBRANZA: dataset ordenado ----------
+  // ---------- COBRANZA: DERIVADOS ----------
   const cobranzaRows = useMemo(() => {
     const rows = installmentsData
-      .filter((r) => (role === "admin" ? true : (r.status ?? "pending") !== "paid"))
+      .filter((r) => (r.status ?? "pending") !== "paid") // pendientes + atrasadas
       .map((r) => {
         const op = r.operation
         const client = r.client
@@ -682,19 +702,16 @@ export default function Page() {
           lateFeeType: op?.late_fee_type ?? "fixed_daily",
           lateFeeValue: op?.late_fee_value ?? 0,
         })
-        const totalToPay = amount + fee
-
         return {
           ...r,
           _amount: amount,
           _daysLate: late,
           _lateFee: fee,
-          _totalToPay: totalToPay,
+          _totalToPay: amount + fee,
           _clientName: fullName(client?.first_name ?? null, client?.last_name ?? null),
           _clientPhone: client?.phone ?? null,
           _clientAddress: client?.address ?? null,
           _frequency: op?.frequency ?? "weekly",
-          _sellerId: op?.seller_id ?? "",
         }
       })
       .sort((a, b) => {
@@ -704,13 +721,64 @@ export default function Page() {
       })
 
     return rows
-  }, [installmentsData, role])
+  }, [installmentsData])
 
-  const hoy = new Date().toISOString().slice(0, 10)
-  const cuotasHoy = cobranzaRows.filter((r) => r.due_date?.slice(0, 10) === hoy)
-  const atrasadas = cobranzaRows.filter((r) => r._daysLate > 0)
-  const cobradasHoy = installmentsData.filter((r) => r.paid_at?.slice(0, 10) === hoy)
-  const totalCobradoHoy = cobradasHoy.reduce((acc, r) => acc + Number(r.amount || 0), 0)
+  const hoyISO = new Date().toISOString().slice(0, 10)
+
+  const cuotasParaHoy = useMemo(() => {
+    return cobranzaRows.filter((r) => (r.due_date ?? "").slice(0, 10) === hoyISO)
+  }, [cobranzaRows, hoyISO])
+
+  const atrasadas = useMemo(() => {
+    return cobranzaRows.filter((r) => (r as any)._daysLate > 0)
+  }, [cobranzaRows])
+
+  const cobradasHoy = useMemo(() => {
+    return installmentsData.filter((r) => (r.paid_at ?? "").slice(0, 10) === hoyISO)
+  }, [installmentsData, hoyISO])
+
+  const totalCobradoHoy = useMemo(() => {
+    return cobradasHoy.reduce((acc, r) => acc + Number(r.amount ?? r.operation?.installment_amount ?? 0), 0)
+  }, [cobradasHoy])
+
+  // ---------- COBRANZA ACTIONS (solo seller/cobrador) ----------
+  async function markInstallmentPaid(installmentId: string) {
+    if (!userId) return
+    if (role === "admin") return // admin solo lectura
+
+    setSavingCobranzaId(installmentId)
+    try {
+      const res = await supabase
+        .from("installments")
+        .update({ status: "paid", paid_at: new Date().toISOString() })
+        .eq("id", installmentId)
+
+      if (res.error) {
+        alert(res.error.message)
+        return
+      }
+      await fetchCobranza(userId, role)
+    } finally {
+      setSavingCobranzaId(null)
+    }
+  }
+
+  async function markInstallmentNoPay(installmentId: string) {
+    if (!userId) return
+    if (role === "admin") return // admin solo lectura
+
+    setSavingCobranzaId(installmentId)
+    try {
+      const res = await supabase.from("installments").update({ status: "late" }).eq("id", installmentId)
+      if (res.error) {
+        alert(res.error.message)
+        return
+      }
+      await fetchCobranza(userId, role)
+    } finally {
+      setSavingCobranzaId(null)
+    }
+  }
 
   // ---------- UI ----------
   if (loading) {
@@ -724,30 +792,13 @@ export default function Page() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-zinc-950 via-zinc-900 to-black text-zinc-100">
       <div className="max-w-6xl mx-auto p-4 sm:p-8">
-        {/* KPIs */}
-        <div className="grid grid-cols-3 gap-3 mb-6">
-          <div className="bg-green-600 text-white p-3 rounded-lg">
-            <div className="text-sm opacity-80">Cobrado hoy</div>
-            <div className="text-xl font-bold">${totalCobradoHoy.toLocaleString()}</div>
-          </div>
-
-          <div className="bg-blue-600 text-white p-3 rounded-lg">
-            <div className="text-sm opacity-80">Cuotas para hoy</div>
-            <div className="text-xl font-bold">{cuotasHoy.length}</div>
-          </div>
-
-          <div className="bg-red-600 text-white p-3 rounded-lg">
-            <div className="text-sm opacity-80">Clientes atrasados</div>
-            <div className="text-xl font-bold">{atrasadas.length}</div>
-          </div>
-        </div>
-
         {/* Top bar */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-5">
           <div>
             <div className="text-2xl font-semibold tracking-tight">CrediElectro Dyn</div>
             <div className="text-sm text-zinc-400">
               Rol: <span className="text-zinc-200">{role === "admin" ? "Administrador" : "Vendedor"}</span>
+              {profile?.name ? <span className="text-zinc-400"> • {profile.name}</span> : null}
             </div>
           </div>
 
@@ -757,6 +808,7 @@ export default function Page() {
               onClick={async () => {
                 await fetchOperations(userId!, role)
                 await fetchCobranza(userId!, role)
+                if (role !== "admin") await fetchClients(userId!)
               }}
               className="px-3 py-2 rounded-xl bg-zinc-900/70 hover:bg-zinc-800 border border-zinc-800 backdrop-blur"
             >
@@ -768,91 +820,460 @@ export default function Page() {
           </div>
         </div>
 
-        {/* Navegación interna (solo vendedor) */}
-        {role !== "admin" && (
-          <div className="mb-6">
-            <div className="inline-flex rounded-2xl border border-zinc-800 bg-zinc-950/60 backdrop-blur p-1">
-              <button
-                type="button"
-                onClick={() => setView("ops")}
-                className={`px-4 py-2 rounded-xl text-sm font-semibold transition ${
-                  view === "ops" ? "bg-sky-600 text-white" : "text-zinc-200 hover:bg-zinc-900"
-                }`}
-              >
-                Operaciones
-              </button>
-              <button
-                type="button"
-                onClick={async () => {
-                  setView("cobranza")
-                  await fetchCobranza(userId!, role)
-                }}
-                className={`px-4 py-2 rounded-xl text-sm font-semibold transition ${
-                  view === "cobranza" ? "bg-emerald-600 text-white" : "text-zinc-200 hover:bg-zinc-900"
-                }`}
-              >
-                Cobranza
-              </button>
+        {/* NAV (admin + seller) */}
+        <div className="mb-6">
+          <div className="inline-flex rounded-2xl border border-zinc-800 bg-zinc-950/60 backdrop-blur p-1">
+            <button
+              type="button"
+              onClick={() => setView("ops")}
+              className={`px-4 py-2 rounded-xl text-sm font-semibold transition ${
+                view === "ops" ? "bg-sky-600 text-white" : "text-zinc-200 hover:bg-zinc-900"
+              }`}
+            >
+              Operaciones
+            </button>
+
+            <button
+              type="button"
+              onClick={async () => {
+                setView("cobranza")
+                await fetchCobranza(userId!, role)
+              }}
+              className={`px-4 py-2 rounded-xl text-sm font-semibold transition ${
+                view === "cobranza" ? "bg-emerald-600 text-white" : "text-zinc-200 hover:bg-zinc-900"
+              }`}
+            >
+              Cobranza
+            </button>
+          </div>
+        </div>
+
+        {errorMsg && (
+          <div className="mb-4 p-3 rounded-xl border border-red-900 bg-red-950 text-red-200">{errorMsg}</div>
+        )}
+
+        {/* KPI (para ambos) */}
+        {view === "cobranza" && (
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
+            <div className="bg-emerald-600 text-white p-3 rounded-xl border border-emerald-700/60">
+              <div className="text-sm opacity-80">Cobrado hoy</div>
+              <div className="text-xl font-bold">{money(totalCobradoHoy)}</div>
+            </div>
+
+            <div className="bg-sky-600 text-white p-3 rounded-xl border border-sky-700/60">
+              <div className="text-sm opacity-80">Cuotas para hoy</div>
+              <div className="text-xl font-bold">{cuotasParaHoy.length}</div>
+            </div>
+
+            <div className="bg-rose-600 text-white p-3 rounded-xl border border-rose-700/60">
+              <div className="text-sm opacity-80">Atrasadas</div>
+              <div className="text-xl font-bold">{atrasadas.length}</div>
             </div>
           </div>
         )}
 
-        {errorMsg && <div className="mb-4 p-3 rounded-xl border border-red-900 bg-red-950 text-red-200">{errorMsg}</div>}
-
-        {/* SELLER ops */}
+        {/* SELLER OPS */}
         {role !== "admin" && view === "ops" && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Form */}
             <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 backdrop-blur p-4 sm:p-6 shadow-xl">
-              {/* --- FORM (igual que antes) --- */}
-              {/* (Para no extender más el mensaje, te dejo el form igual que el tuyo: mantenelo tal cual) */}
-              <div className="text-zinc-300">
-                Pegá tu FORM acá tal cual lo tenías (desde "Nueva operación" hasta el botón Guardar). No lo toqué.
+              <div className="text-lg font-semibold mb-4">Nueva operación</div>
+
+              {/* Cliente */}
+              <div className="mb-4">
+                <div className="text-sm text-zinc-300 mb-2">Cliente</div>
+                <div className="flex gap-4 text-sm">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="radio" checked={clientMode === "existing"} onChange={() => setClientMode("existing")} />
+                    Existente
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="radio" checked={clientMode === "new"} onChange={() => setClientMode("new")} />
+                    Nuevo
+                  </label>
+                </div>
+
+                {clientMode === "existing" ? (
+                  <select
+                    className="mt-3 w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800 focus:outline-none focus:ring-2 focus:ring-zinc-700"
+                    value={selectedClientId}
+                    onChange={(e) => setSelectedClientId(e.target.value)}
+                  >
+                    <option value="" className="bg-zinc-950 text-zinc-100">
+                      — Elegí un cliente —
+                    </option>
+                    {clients.map((c) => (
+                      <option key={c.id} value={c.id} className="bg-zinc-950 text-zinc-100">
+                        {fullName(c.first_name, c.last_name)}
+                        {c.dni ? ` — DNI ${c.dni}` : ""}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <>
+                    <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <input
+                        className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
+                        placeholder="Nombre"
+                        value={firstName}
+                        onChange={(e) => setFirstName(e.target.value)}
+                      />
+                      <input
+                        className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
+                        placeholder="Apellido"
+                        value={lastName}
+                        onChange={(e) => setLastName(e.target.value)}
+                      />
+                    </div>
+
+                    <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <input
+                        className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
+                        placeholder="DNI"
+                        value={dni}
+                        onChange={(e) => setDni(e.target.value)}
+                        inputMode="numeric"
+                      />
+                      <input
+                        className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
+                        placeholder="Celular"
+                        value={phone}
+                        onChange={(e) => setPhone(e.target.value)}
+                        inputMode="tel"
+                      />
+                    </div>
+
+                    <div className="mt-3">
+                      <input
+                        className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
+                        placeholder="Dirección"
+                        value={address}
+                        onChange={(e) => setAddress(e.target.value)}
+                      />
+                    </div>
+                  </>
+                )}
               </div>
+
+              {/* Tipo */}
+              <div className="mb-4">
+                <div className="text-sm text-zinc-300 mb-2">Tipo</div>
+                <select
+                  className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800 focus:outline-none focus:ring-2 focus:ring-zinc-700"
+                  value={operationType}
+                  onChange={(e) => setOperationType(e.target.value as any)}
+                >
+                  <option value="sale" className="bg-zinc-950 text-zinc-100">
+                    Venta
+                  </option>
+                  <option value="loan" className="bg-zinc-950 text-zinc-100">
+                    Préstamo
+                  </option>
+                </select>
+              </div>
+
+              {/* Detalle */}
+              <div className="mb-4">
+                <div className="text-sm text-zinc-300 mb-2">{operationType === "sale" ? "Qué se vendió" : "Motivo del préstamo"}</div>
+                <input
+  className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
+  placeholder={operationType === "sale" ? 'Ej: "Heladera", "Moto"...' : 'Ej: "Efectivo", "Compra"...'}
+  value={operationType === "sale" ? saleItem : loanPurpose}
+  onChange={(e) =>
+    operationType === "sale"
+      ? setSaleItem(e.target.value)
+      : setLoanPurpose(e.target.value)
+  }
+/>
+              </div>
+
+              {/* Frecuencia */}
+              <div className="mb-4">
+                <div className="text-sm text-zinc-300 mb-2">Frecuencia</div>
+                <select
+                  className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800 focus:outline-none focus:ring-2 focus:ring-zinc-700"
+                  value={frequency}
+                  onChange={(e) => setFrequency(e.target.value as any)}
+                >
+                  <option value="weekly" className="bg-zinc-950 text-zinc-100">
+                    Semanal
+                  </option>
+                  <option value="biweekly" className="bg-zinc-950 text-zinc-100">
+                    Quincenal
+                  </option>
+                  <option value="three_weeks" className="bg-zinc-950 text-zinc-100">
+                    Cada 3 semanas
+                  </option>
+                  <option value="monthly" className="bg-zinc-950 text-zinc-100">
+                    Mensual
+                  </option>
+                </select>
+              </div>
+
+              {/* Números */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
+                <div>
+                  <div className="text-sm text-zinc-300 mb-2">Base de monto</div>
+                  <input
+                    className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
+                    placeholder="Ej: 50000"
+                    value={baseAmount}
+                    onChange={(e) => setBaseAmount(e.target.value)}
+                    inputMode="decimal"
+                  />
+                </div>
+                <div>
+                  <div className="text-sm text-zinc-300 mb-2">Interés (%)</div>
+                  <input
+                    className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
+                    placeholder="Ej: 25"
+                    value={interestPercent}
+                    onChange={(e) => setInterestPercent(e.target.value)}
+                    inputMode="decimal"
+                  />
+                </div>
+                <div>
+                  <div className="text-sm text-zinc-300 mb-2">Cuotas</div>
+                  <input
+                    className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
+                    placeholder="Ej: 8"
+                    value={installments}
+                    onChange={(e) => setInstallments(e.target.value)}
+                    inputMode="numeric"
+                  />
+                </div>
+              </div>
+
+              {/* Preview */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+                <div className="p-3 rounded-xl border border-zinc-800 bg-zinc-950/60">
+                  <div className="text-xs text-zinc-400">Total (vista previa)</div>
+                  <div className="text-lg font-semibold text-sky-300">{money(previewTotal)}</div>
+                </div>
+                <div className="p-3 rounded-xl border border-zinc-800 bg-zinc-950/60">
+                  <div className="text-xs text-zinc-400">Cuota (vista previa)</div>
+                  <div className="text-lg font-semibold text-emerald-300">{money(previewInstallment)}</div>
+                </div>
+              </div>
+
+              {/* Notas */}
+              <div className="mb-4">
+                <div className="text-sm text-zinc-300 mb-2">Notas (opcional)</div>
+                <textarea
+                  className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800 min-h-[90px]"
+                  placeholder="Notas..."
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                />
+              </div>
+
+              <button
+                type="button"
+                onClick={saveOperation}
+                disabled={saving}
+                className="w-full py-3 rounded-xl bg-sky-600 hover:bg-sky-500 disabled:opacity-60 font-semibold shadow-lg"
+              >
+                {saving ? "Guardando..." : "Guardar operación"}
+              </button>
             </div>
 
+            {/* tabla seller */}
             <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 backdrop-blur p-4 sm:p-6 shadow-xl">
               <OperationsTable role={role} operations={operations} />
             </div>
           </div>
         )}
 
-        {/* SELLER cobranza */}
-        {role !== "admin" && view === "cobranza" && (
-          <CobranzaTable
-            title="Cobranza"
-            subtitle="Pendientes + Atrasadas (ordenadas por vencimiento)"
-            role={role}
-            cobranzaRows={cobranzaRows}
-            loadingCobranza={loadingCobranza}
-            onRefresh={() => fetchCobranza(userId!, role)}
-            onPaid={markInstallmentPaid}
-            onNoPay={markInstallmentNoPay}
-            savingCobranzaId={savingCobranzaId}
-          />
+        {/* ADMIN OPS */}
+        {role === "admin" && view === "ops" && (
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 backdrop-blur p-4 sm:p-6 shadow-xl">
+            <OperationsTable role={role} operations={operations} onEdit={startEditOperation} onDelete={deleteOperation} />
+          </div>
         )}
 
-        {/* ADMIN: operaciones + cobranza */}
-        {role === "admin" && (
-          <>
-            <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 backdrop-blur p-4 sm:p-6 shadow-xl">
-              <OperationsTable role={role} operations={operations} onEdit={startEditOperation} onDelete={deleteOperation} />
+        {/* COBRANZA (integrada) */}
+        {view === "cobranza" && (
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 backdrop-blur p-4 sm:p-6 shadow-xl">
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <div className="text-lg font-semibold">
+                  Cobranza {role === "admin" ? "(Solo lectura)" : ""}
+                </div>
+                <div className="text-xs text-zinc-400">Pendientes + Atrasadas (ordenadas por vencimiento)</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => fetchCobranza(userId!, role)}
+                className="px-3 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800"
+                disabled={loadingCobranza}
+              >
+                {loadingCobranza ? "Cargando..." : "Refrescar"}
+              </button>
             </div>
 
-            <div className="h-6" />
+            {/* Pendientes / Atrasadas */}
+            <div className="overflow-x-auto border border-zinc-800 rounded-xl bg-zinc-950/40 backdrop-blur">
+              <table className="min-w-[1300px] w-full text-sm table-auto border-collapse">
+                <thead className="bg-zinc-900">
+                  <tr>
+                    {role === "admin" && (
+                      <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Vendedor</th>
+                    )}
+                    <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Cliente</th>
+                    <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Vence</th>
+                    <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Cuota #</th>
+                    <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Frecuencia</th>
+                    <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Monto</th>
+                    <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Atraso</th>
+                    <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Mora</th>
+                    <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Total a cobrar</th>
+                    {role !== "admin" && (
+                      <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Acciones</th>
+                    )}
+                  </tr>
+                </thead>
+                <tbody>
+                  {cobranzaRows.length === 0 ? (
+                    <tr>
+                      <td className="p-3 text-zinc-400" colSpan={role === "admin" ? 9 : 10}>
+                        No hay cuotas pendientes 🎉
+                      </td>
+                    </tr>
+                  ) : (
+                    cobranzaRows.map((r: any) => (
+                      <tr key={r.id} className="odd:bg-zinc-950/40 hover:bg-zinc-900/40 transition">
+                        {role === "admin" && (
+                          <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
+                            {r.seller_name ?? "Vendedor"}
+                          </td>
+                        )}
+                        <td className="p-2 border-b border-zinc-900">
+                          <div className="font-semibold">{r._clientName}</div>
+                          <div className="text-xs text-zinc-400">
+                            {r._clientPhone ? 📞 ${r._clientPhone} : ""}
+                            {r._clientAddress ? ` • 📍 ${r._clientAddress}` : ""}
+                          </div>
+                        </td>
+                        <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{dateAR(r.due_date)}</td>
+                        <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{r.installment_number}</td>
+                        <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
+                          {freqLabel[r._frequency as keyof typeof freqLabel] ?? "—"}
+                        </td>
+                        <td className="p-2 border-b border-zinc-900 whitespace-nowrap text-sky-200 font-semibold">
+                          {money(r._amount)}
+                        </td>
+                        <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
+                          {r._daysLate > 0 ? (
+                            <span className="text-amber-300 font-semibold">{r._daysLate} días</span>
+                          ) : (
+                            <span className="text-zinc-400">0</span>
+                          )}
+                        </td>
+                        <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
+                          {r._lateFee > 0 ? (
+                            <span className="text-amber-300 font-semibold">{money(r._lateFee)}</span>
+                          ) : (
+                            <span className="text-zinc-400">—</span>
+                          )}
+                        </td>
+                        <td className="p-2 border-b border-zinc-900 whitespace-nowrap text-emerald-300 font-semibold">
+                          {money(r._totalToPay)}
+                        </td>
 
-            <CobranzaTable
-              title="Cobranza (Admin)"
-              subtitle="Acá ves TODO: pendientes, atrasadas y cobradas (si RLS permite)"
-              role={role}
-              cobranzaRows={cobranzaRows}
-              loadingCobranza={loadingCobranza}
-              onRefresh={() => fetchCobranza(userId!, role)}
-              onPaid={markInstallmentPaid}
-              onNoPay={markInstallmentNoPay}
-              savingCobranzaId={savingCobranzaId}
-              showPaidForAdmin
-            />
-          </>
+                        {role !== "admin" && (
+                          <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
+                            <div className="flex gap-2">
+                              <button
+                                type="button"
+                                onClick={() => markInstallmentPaid(r.id)}
+                                disabled={savingCobranzaId === r.id}
+                                className="px-2 py-1 rounded bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60"
+                              >
+                                {savingCobranzaId === r.id ? "..." : "Pagó"}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => markInstallmentNoPay(r.id)}
+                                disabled={savingCobranzaId === r.id}
+                                className="px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 disabled:opacity-60"
+                              >
+                                No pagó
+                              </button>
+                            </div>
+                          </td>
+                        )}
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* ADMIN: Cobrado hoy (solo lectura) */}
+            {role === "admin" && (
+              <div className="mt-6">
+                <div className="flex items-end justify-between mb-2">
+                  <div>
+                    <div className="text-base font-semibold">Cobrado hoy</div>
+                    <div className="text-xs text-zinc-400">Movimientos con paid_at = hoy</div>
+                  </div>
+                  <div className="text-sm text-zinc-200">
+                    Total: <span className="font-semibold text-emerald-300">{money(totalCobradoHoy)}</span>
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto border border-zinc-800 rounded-xl bg-zinc-950/40 backdrop-blur">
+                  <table className="min-w-[1100px] w-full text-sm table-auto border-collapse">
+                    <thead className="bg-zinc-900">
+                      <tr>
+                        <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Hora</th>
+                        <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Vendedor</th>
+                        <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Cliente</th>
+                        <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Cuota #</th>
+                        <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Monto</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {cobradasHoy.length === 0 ? (
+                        <tr>
+                          <td className="p-3 text-zinc-400" colSpan={5}>
+                            Hoy todavía no hay cobranzas registradas.
+                          </td>
+                        </tr>
+                      ) : (
+                        cobradasHoy
+                          .slice()
+                          .sort((a, b) => {
+                            const da = a.paid_at ? new Date(a.paid_at).getTime() : 0
+                            const db = b.paid_at ? new Date(b.paid_at).getTime() : 0
+                            return db - da
+                          })
+                          .map((r) => {
+                            const clientName = fullName(r.client?.first_name ?? null, r.client?.last_name ?? null)
+                            const amt = Number(r.amount ?? r.operation?.installment_amount ?? 0)
+                            return (
+                              <tr key={r.id} className="odd:bg-zinc-950/40 hover:bg-zinc-900/40 transition">
+                                <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{dateTimeAR(r.paid_at)}</td>
+                                <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{r.seller_name ?? "Vendedor"}</td>
+                                <td className="p-2 border-b border-zinc-900">{clientName}</td>
+                                <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{r.installment_number}</td>
+                                <td className="p-2 border-b border-zinc-900 whitespace-nowrap text-emerald-300 font-semibold">
+                                  {money(amt)}
+                                </td>
+                              </tr>
+                            )
+                          })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            <div className="mt-3 text-xs text-zinc-500">
+              Nota: la mora se calcula con <b>late_fee_type</b> y <b>late_fee_value</b> de la operación (fijo diario o % diario).
+            </div>
+          </div>
         )}
       </div>
 
@@ -867,127 +1288,161 @@ export default function Page() {
                   Cliente: {loadingClientForEdit ? "Cargando..." : fullName(editClientFirst || null, editClientLast || null)}
                 </div>
               </div>
-              <button type="button" className="px-3 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800" onClick={() => setEditingOp(null)}>
+              <button
+                type="button"
+                className="px-3 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800"
+                onClick={() => setEditingOp(null)}
+              >
                 Cerrar
               </button>
             </div>
 
-            {/* (Modal igual que el tuyo: mantenelo tal cual si querés) */}
-            <div className="text-zinc-300">
-              Pegá tu MODAL acá tal cual lo tenías (no afecta a Cobranza). Si querés también lo integro completo, decime.
+            {/* CLIENTE */}
+            <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4 mb-4">
+              <div className="text-sm font-semibold mb-3">Datos del cliente</div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <input
+                  className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
+                  placeholder="Nombre"
+                  value={editClientFirst}
+                  onChange={(e) => setEditClientFirst(e.target.value)}
+                  disabled={loadingClientForEdit || !editClientId}
+                />
+                <input
+                  className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
+                  placeholder="Apellido"
+                  value={editClientLast}
+                  onChange={(e) => setEditClientLast(e.target.value)}
+                  disabled={loadingClientForEdit || !editClientId}
+                />
+                <input
+                  className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
+                  placeholder="DNI"
+                  value={editClientDni}
+                  onChange={(e) => setEditClientDni(e.target.value)}
+                  inputMode="numeric"
+                  disabled={loadingClientForEdit || !editClientId}
+                />
+                <input
+                  className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
+                  placeholder="Celular"
+                  value={editClientPhone}
+                  onChange={(e) => setEditClientPhone(e.target.value)}
+                  inputMode="tel"
+                  disabled={loadingClientForEdit || !editClientId}
+                />
+                <input
+                  className="sm:col-span-2 w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
+                  placeholder="Dirección"
+                  value={editClientAddress}
+                  onChange={(e) => setEditClientAddress(e.target.value)}
+                  disabled={loadingClientForEdit || !editClientId}
+                />
+              </div>
+              {!editClientId && <div className="text-xs text-zinc-500 mt-2">Esta operación no tiene cliente asignado.</div>}
+            </div>
+
+            {/* OPERACIÓN */}
+            <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4">
+              <div className="text-sm font-semibold mb-3">Datos de la operación</div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+                <div>
+                  <div className="text-sm text-zinc-300 mb-2">Tipo</div>
+                  <select
+                    className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
+                    value={editType}
+                    onChange={(e) => setEditType(e.target.value as any)}
+                  >
+                    <option value="sale">Venta</option>
+                    <option value="loan">Préstamo</option>
+                  </select>
+                </div>
+
+                <div>
+                  <div className="text-sm text-zinc-300 mb-2">Frecuencia</div>
+                  <select
+                    className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
+                    value={editFrequency}
+                    onChange={(e) => setEditFrequency(e.target.value as any)}
+                  >
+                    <option value="weekly">Semanal</option>
+                    <option value="biweekly">Quincenal</option>
+                    <option value="three_weeks">Cada 3 semanas</option>
+                    <option value="monthly">Mensual</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="mb-3">
+                <div className="text-sm text-zinc-300 mb-2">{editType === "sale" ? "Qué se vendió" : "Motivo del préstamo"}</div>
+                <input
+                  className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
+                  value={editDetail}
+                  onChange={(e) => setEditDetail(e.target.value)}
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
+                <div>
+                  <div className="text-sm text-zinc-300 mb-2">Monto base</div>
+                  <input
+                    className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
+                    value={editBaseAmount}
+                    onChange={(e) => setEditBaseAmount(e.target.value)}
+                    inputMode="decimal"
+                  />
+                </div>
+                <div>
+                  <div className="text-sm text-zinc-300 mb-2">Interés (%)</div>
+                  <input
+                    className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
+                    value={editInterest}
+                    onChange={(e) => setEditInterest(e.target.value)}
+                    inputMode="decimal"
+                  />
+                </div>
+                <div>
+                  <div className="text-sm text-zinc-300 mb-2">Cuotas</div>
+                  <input
+                    className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
+                    value={editInstallments}
+                    onChange={(e) => setEditInstallments(e.target.value)}
+                    inputMode="numeric"
+                  />
+                </div>
+              </div>
+
+              <div className="mb-4">
+                <div className="text-sm text-zinc-300 mb-2">Notas</div>
+                <textarea
+                  className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800 min-h-[90px]"
+                  value={editNotes}
+                  onChange={(e) => setEditNotes(e.target.value)}
+                />
+              </div>
+
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={saveEditOperation}
+                  disabled={savingEdit || loadingClientForEdit}
+                  className="px-4 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 disabled:opacity-60 font-semibold"
+                >
+                  {savingEdit ? "Guardando..." : "Guardar cambios"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditingOp(null)}
+                  className="px-4 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800"
+                >
+                  Cancelar
+                </button>
+              </div>
             </div>
           </div>
         </div>
       )}
-    </div>
-  )
-}
-
-// ---------- COBRANZA TABLE COMPONENT ----------
-function CobranzaTable(props: {
-  title: string
-  subtitle: string
-  role: Role
-  cobranzaRows: any[]
-  loadingCobranza: boolean
-  onRefresh: () => void
-  onPaid: (id: string) => void
-  onNoPay: (id: string) => void
-  savingCobranzaId: string | null
-  showPaidForAdmin?: boolean
-}) {
-  const { title, subtitle, role, cobranzaRows, loadingCobranza, onRefresh, onPaid, onNoPay, savingCobranzaId, showPaidForAdmin } = props
-
-  const rows = useMemo(() => {
-    if (role !== "admin") return cobranzaRows
-    if (showPaidForAdmin) return cobranzaRows
-    return cobranzaRows.filter((r: any) => (r.status ?? "pending") !== "paid")
-  }, [cobranzaRows, role, showPaidForAdmin])
-
-  return (
-    <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 backdrop-blur p-4 sm:p-6 shadow-xl">
-      <div className="flex items-center justify-between mb-3">
-        <div>
-          <div className="text-lg font-semibold">{title}</div>
-          <div className="text-xs text-zinc-400">{subtitle}</div>
-        </div>
-        <button type="button" onClick={onRefresh} className="px-3 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800" disabled={loadingCobranza}>
-          {loadingCobranza ? "Cargando..." : "Refrescar"}
-        </button>
-      </div>
-
-      <div className="overflow-x-auto border border-zinc-800 rounded-xl bg-zinc-950/40 backdrop-blur">
-        <table className="min-w-[1200px] w-full text-sm table-auto border-collapse">
-          <thead className="bg-zinc-900">
-            <tr>
-              <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Cliente</th>
-              <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Vence</th>
-              <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Cuota #</th>
-              <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Frecuencia</th>
-              <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Monto</th>
-              <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Atraso</th>
-              <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Mora</th>
-              <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Total a cobrar</th>
-              <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Estado</th>
-              <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Acciones</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.length === 0 ? (
-              <tr>
-                <td className="p-3 text-zinc-400" colSpan={10}>
-                  No hay registros de cobranza.
-                </td>
-              </tr>
-            ) : (
-              rows.map((r: any) => (
-                <tr key={r.id} className="odd:bg-zinc-950/40 hover:bg-zinc-900/40 transition">
-                  <td className="p-2 border-b border-zinc-900">
-                    <div className="font-semibold">{r._clientName}</div>
-                    <div className="text-xs text-zinc-400">
-                      {r._clientPhone ? 📞 ${r._clientPhone} : ""} {r._clientAddress ? • 📍 ${r._clientAddress} : ""}
-                    </div>
-                  </td>
-                  <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{dateAR(r.due_date)}</td>
-                  <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{r.installment_number}</td>
-                  <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{freqLabel[r._frequency as keyof typeof freqLabel] ?? "—"}</td>
-                  <td className="p-2 border-b border-zinc-900 whitespace-nowrap text-sky-200 font-semibold">{money(r._amount)}</td>
-                  <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
-                    {r._daysLate > 0 ? <span className="text-amber-300 font-semibold">{r._daysLate} días</span> : <span className="text-zinc-400">0</span>}
-                  </td>
-                  <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
-                    {r._lateFee > 0 ? <span className="text-amber-300 font-semibold">{money(r._lateFee)}</span> : <span className="text-zinc-400">—</span>}
-                  </td>
-                  <td className="p-2 border-b border-zinc-900 whitespace-nowrap text-emerald-300 font-semibold">{money(r._totalToPay)}</td>
-                  <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
-                    {String(r.status ?? "pending") === "paid" ? <span className="text-emerald-300 font-semibold">Pagado</span> : <span className="text-zinc-200">Pendiente</span>}
-                  </td>
-                  <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        onClick={() => onPaid(r.id)}
-                        disabled={savingCobranzaId === r.id}
-                        className="px-2 py-1 rounded bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60"
-                      >
-                        {savingCobranzaId === r.id ? "..." : "Pagó"}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => onNoPay(r.id)}
-                        disabled={savingCobranzaId === r.id}
-                        className="px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 disabled:opacity-60"
-                      >
-                        No pagó
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
     </div>
   )
 }
@@ -1043,16 +1498,30 @@ function OperationsTable({
                 const detail = op.operation_type === "sale" ? op.sale_item : op.loan_purpose
                 return (
                   <tr key={op.id} className="odd:bg-zinc-950/40 hover:bg-zinc-900/40 transition">
-                    {role === "admin" && <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{op.seller_name ?? "Vendedor"}</td>}
+                    {role === "admin" && (
+                      <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{op.seller_name ?? "Vendedor"}</td>
+                    )}
+
                     <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{new Date(op.created_at).toLocaleString("es-AR")}</td>
-                    <td className="p-2 border-b border-zinc-900 whitespace-nowrap text-emerald-300 font-semibold">{dateAR(op.first_due_date)}</td>
+
+                    <td className="p-2 border-b border-zinc-900 whitespace-nowrap text-emerald-300 font-semibold">
+                      {dateAR(op.first_due_date)}
+                    </td>
+
                     <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{op.operation_type === "sale" ? "Venta" : "Préstamo"}</td>
+
                     <td className="p-2 border-b border-zinc-900 min-w-[220px]">{detail || <span className="text-zinc-500">—</span>}</td>
+
                     <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{freqLabel[op.frequency]}</td>
+
                     <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{money(op.base_amount)}</td>
+
                     <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{op.interest_percent}%</td>
+
                     <td className="p-2 border-b border-zinc-900 whitespace-nowrap text-sky-300 font-semibold">{money(op.total_amount)}</td>
+
                     <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{op.installments_count}</td>
+
                     <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{money(op.installment_amount)}</td>
 
                     {canAdminActions && (
