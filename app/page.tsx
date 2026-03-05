@@ -769,7 +769,10 @@ export default function Page() {
 
     setSavingCobranzaId(installmentId)
     try {
-      const res = await supabase.from("installments").update({ status: "late" }).eq("id", installmentId)
+      const res = await supabase
+      .from("installments")
+      .update({ status: "late", paid_at: null})
+      .eq("id", installmentId)
       if (res.error) {
         alert(res.error.message)
         return
