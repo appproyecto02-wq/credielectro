@@ -1103,38 +1103,52 @@ async function fetchCobranza(currentUserId: string, currentRole: Role) {
           </tr>
         </thead>
         <tbody>
-          {installmentsData.length === 0 ? (
-            <tr>
-              <td className="p-3 text-zinc-400" colSpan={6}>No hay datos de cobranza.</td>
-            </tr>
-          ) : (
-            installmentsData.map((r) => (
-              <tr key={r.id} className="odd:bg-zinc-950/40 hover:bg-zinc-900/40 transition">
-                <td className="p-2 border-b border-zinc-900">
-                  <div className="font-semibold">{fullName(r.client?.first_name, r.client?.last_name)}</div>
-                  <div className="text-xs text-zinc-400">
-                    {r.client?.phone ? 📞 ${r.client.phone} : ""} {r.client?.address ? • 📍 ${r.client.address} : ""}
-                  </div>
-                </td>
-                <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{dateAR(r.due_date)}</td>
-                <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{r.installment_number}</td>
-                <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
-                  {String(r.status)}
-                </td>
-                <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
-                  {money(Number(r.amount ?? r.operation?.installment_amount ?? 0))}
-                </td>
-                <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
-                  {r.paid_at ? dateAR(r.paid_at) : "—"}
-                </td>
-              </tr>
-            ))
-          )}
-        </tbody>
+  {installmentsData.length === 0 ? (
+    <tr>
+      <td className="p-3 text-zinc-400" colSpan={6}>
+        No hay datos de cobranza
+      </td>
+    </tr>
+  ) : (
+    installmentsData.map((r) => (
+      <tr key={r.id} className="odd:bg-zinc-950/40 hover:bg-zinc-900/40">
+        <td className="p-2 border-b border-zinc-900">
+          <div className="font-semibold">
+            {fullName(r.client?.first_name, r.client?.last_name)}
+          </div>
+          <div className="text-xs text-zinc-400">
+          {r.client?.phone ?? ""}
+          {r.client?.address ?? ""}
+        </div>
+        </td>
+
+        <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
+          {dateAR(r.due_date)}
+        </td>
+
+        <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
+          {r.installment_number}
+        </td>
+
+        <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
+          {String(r.status)}
+        </td>
+
+        <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
+          {money(Number(r.amount ?? r.operation?.installment_amount ?? 0))}
+        </td>
+
+        <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
+          {r.paid_at ? dateAR(r.paid_at) : "—"}
+        </td>
+      </tr>
+    ))
+  )}
+</tbody>
       </table>
     </div>
   </div>
-)}
+]
         {/* COBRANZA (integrada) */}
         {(view === "cobranza" || role === "admin") && (
           <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 backdrop-blur p-4 sm:p-6 shadow-xl">
@@ -1194,7 +1208,7 @@ async function fetchCobranza(currentUserId: string, currentRole: Role) {
                         <td className="p-2 border-b border-zinc-900">
                           <div className="font-semibold">{r._clientName}</div>
                           <div className="text-xs text-zinc-400">
-                            {r._clientPhone ? 📞 ${r._clientPhone} : ""}
+                            {r._clientPhone ? "📞 " + r._clientPhone : ""}
                             {r._clientAddress ? ` • 📍 ${r._clientAddress}` : ""}
                           </div>
                         </td>
