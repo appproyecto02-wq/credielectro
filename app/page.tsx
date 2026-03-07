@@ -265,6 +265,27 @@ const [savingDailyLoan, setSavingDailyLoan] = useState(false)
   useEffect(() => {
   setDailyLoanInterest(String(DAILY_PLANS[dailyLoanPlan]))
 }, [dailyLoanPlan])
+useEffect(() => {
+  const interestMap: Record<number, number> = {
+    12: 20,
+    17: 35,
+    24: 45,
+    36: 75,
+    48: 100,
+  }
+
+  setDailyLoanInterest(String(interestMap[dailyLoanPlan] ?? 0))
+}, [dailyLoanPlan])
+
+useEffect(() => {
+  if (dailyLoanFirstDueDate) return
+
+  const d = new Date()
+  d.setDate(d.getDate() + 1)
+
+  setDailyLoanFirstDueDate(d.toISOString().slice(0, 10))
+}, [dailyLoanFirstDueDate])
+
 
   // ---------- AUTH ----------
   useEffect(() => {
@@ -818,6 +839,147 @@ fetchCobranza(userId as string, role)
       setSavingCobranzaId(null)
     }
   }
+async function createDailyClientIfNeeded(): Promise<string | null> {
+  if (dailyClientMode === "existing") return dailySelectedClientId || null
+  if (!userId) return null
+
+  const fn = dailyFirstName.trim()
+  const ln = dailyLastName.trim()
+  const d = dailyDni.trim()
+  const ph = dailyPhone.trim()
+  const addr = dailyAddress.trim()
+
+  if (!fn || !ln) {
+    alert("Completá nombre y apellido del cliente.")
+    return null
+  }
+
+  const res = await supabase
+    .from("clients")
+    .insert({
+      first_name: fn || null,
+      last_name: ln || null,
+      dni: d || null,
+      phone: ph || null,
+      address: addr || null,
+      created_by: userId,
+    })
+    .select("id")
+    .single()
+
+  if (res.error) {
+    alert(res.error.message)
+    return null
+  }
+
+  await fetchClients(userId)
+
+  return (res.data as any)?.id ?? null
+}
+
+async function createDailyLoan() {
+  if (!userId) return
+
+  const clientId = await createDailyClientIfNeeded()
+  if (!clientId) {
+    alert("Seleccioná o creá un cliente.")
+    return
+  }
+
+  if (!dailyLoanAmount || Number(dailyLoanAmount) <= 0) {
+    alert("Ingresá un monto válido.")
+    return
+  }
+
+  if (!dailyLoanFirstDueDate) {
+    alert("Ingresá la fecha del primer vencimiento.")
+    return
+  }
+
+  setSavingDailyLoan(true)
+
+  try {
+    const baseAmount = Number(dailyLoanAmount)
+    const interestPercent = Number(dailyLoanInterest || 0)
+    const installmentsCount = Number(dailyLoanPlan)
+
+    const totalAmount =
+      baseAmount + baseAmount * (interestPercent / 100)
+
+    const installmentAmount =
+      installmentsCount > 0 ? totalAmount / installmentsCount : 0
+
+    const opRes = await supabase
+      .from("operations")
+      .insert({
+        seller_id: userId,
+        operation_type: "loan",
+        frequency: "daily",
+        client_id: clientId,
+        base_amount: baseAmount,
+        interest_percent: interestPercent,
+        installments_count: installmentsCount,
+        total_amount: totalAmount,
+        installment_amount: installmentAmount,
+        loan_purpose: "Préstamo diario",
+        first_due_date: dailyLoanFirstDueDate,
+      })
+      .select("id")
+      .single()
+
+    if (opRes.error) {
+      alert(opRes.error.message)
+      return
+    }
+
+    const operationId = (opRes.data as any)?.id as string
+
+    const installmentsToInsert = Array.from({ length: installmentsCount }, (_, i) => {
+      const due = new Date(dailyLoanFirstDueDate + "T00:00:00")
+      due.setDate(due.getDate() + i)
+
+      return {
+        operation_id: operationId,
+        installment_number: i + 1,
+        due_date: due.toISOString().slice(0, 10),
+        amount: installmentAmount,
+        status: "pending",
+        paid_at: null,
+      }
+    })
+
+    const insRes = await supabase
+      .from("installments")
+      .insert(installmentsToInsert)
+
+    if (insRes.error) {
+      alert(insRes.error.message)
+      return
+    }
+
+    await fetchOperations(userId, role)
+    await fetchCobranza(userId, role)
+
+    setDailyClientMode("existing")
+    setDailySelectedClientId("")
+    setDailyFirstName("")
+    setDailyLastName("")
+    setDailyDni("")
+    setDailyPhone("")
+    setDailyAddress("")
+    setDailyLoanAmount("")
+    setDailyLoanPlan(12)
+    setDailyLoanInterest("20")
+
+    const tomorrow = new Date()
+    tomorrow.setDate(tomorrow.getDate() + 1)
+    setDailyLoanFirstDueDate(tomorrow.toISOString().slice(0, 10))
+
+    alert("Préstamo diario creado correctamente.")
+  } finally {
+    setSavingDailyLoan(false)
+  }
+}
 
   // ---------- UI ----------
   if (loading) {
@@ -1595,7 +1757,17 @@ const dailyInstallmentAmount =
         </div>
       </div>
     </div>
-  </div>
+  <div className="mt-6 flex justify-end">
+  <button
+    type="button"
+    onClick={createDailyLoan}
+    disabled={savingDailyLoan}
+    className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white font-semibold"
+  >
+    {savingDailyLoan ? "Guardando..." : "Crear préstamo diario"}
+  </button>
+</div>
+</div>
 )}
       </div>
 
