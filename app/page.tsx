@@ -955,7 +955,7 @@ async function createDailyLoan() {
 
     const insRes = await supabase
       .from("installments")
-      .insert(installmentsToInsert)
+      .upsert(installmentsToInsert, { onConflict: "operation_id,installment_number"})
 
     if (insRes.error) {
       alert(insRes.error.message)
