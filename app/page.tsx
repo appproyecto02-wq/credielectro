@@ -934,6 +934,11 @@ async function createDailyLoan() {
 
     const operationId = (opRes.data as any)?.id as string
 
+    await supabase
+  .from("installments")
+  .delete()
+  .eq("operation_id", operationId)
+  
     const installmentsToInsert = Array.from({ length: installmentsCount }, (_, i) => {
       const due = new Date(dailyLoanFirstDueDate + "T00:00:00")
       due.setDate(due.getDate() + i)
