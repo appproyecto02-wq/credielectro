@@ -169,7 +169,7 @@ export default function Page() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
 
   // view mode (admin y seller)
-  const [view, setView] = useState<"ops" | "cobranza">("ops")
+  const [view, setView] = useState<"ops" | "cobranza" | "daily-loans">("ops")
 
   // seller data
   const [clients, setClients] = useState<Client[]>([])
@@ -189,6 +189,28 @@ export default function Page() {
   const [dni, setDni] = useState("")
   const [phone, setPhone] = useState("")
   const [address, setAddress] = useState("")
+  const DAILY_PLANS = {
+  12: 20,
+  17: 35,
+  24: 45,
+  36: 75,
+  48: 100,
+} as const
+
+const [dailyClientMode, setDailyClientMode] = useState<"existing" | "new">("existing")
+const [dailySelectedClientId, setDailySelectedClientId] = useState<string>("")
+
+const [dailyFirstName, setDailyFirstName] = useState("")
+const [dailyLastName, setDailyLastName] = useState("")
+const [dailyDni, setDailyDni] = useState("")
+const [dailyPhone, setDailyPhone] = useState("")
+const [dailyAddress, setDailyAddress] = useState("")
+
+const [dailyLoanAmount, setDailyLoanAmount] = useState("")
+const [dailyLoanPlan, setDailyLoanPlan] = useState<12 | 17 | 24 | 36 | 48>(12)
+const [dailyLoanInterest, setDailyLoanInterest] = useState("20")
+const [dailyLoanFirstDueDate, setDailyLoanFirstDueDate] = useState("")
+const [savingDailyLoan, setSavingDailyLoan] = useState(false)
 
   const [operationType, setOperationType] = useState<Operation["operation_type"]>("sale")
   const [saleItem, setSaleItem] = useState("")
@@ -239,6 +261,10 @@ export default function Page() {
   const [editClientAddress, setEditClientAddress] = useState("")
   const [loadingClientForEdit, setLoadingClientForEdit] = useState(false)
   const [savingEdit, setSavingEdit] = useState(false)
+
+  useEffect(() => {
+  setDailyLoanInterest(String(DAILY_PLANS[dailyLoanPlan]))
+}, [dailyLoanPlan])
 
   // ---------- AUTH ----------
   useEffect(() => {
@@ -801,6 +827,16 @@ fetchCobranza(userId as string, role)
       </div>
     )
   }
+  
+  const dailyBaseAmount = Number(dailyLoanAmount || 0)
+const dailyInterestPercent = Number(dailyLoanInterest || 0)
+const dailyInstallmentsCount = Number(dailyLoanPlan || 0)
+
+const dailyTotalAmount =
+  dailyBaseAmount + dailyBaseAmount * (dailyInterestPercent / 100)
+
+const dailyInstallmentAmount =
+  dailyInstallmentsCount > 0 ? dailyTotalAmount / dailyInstallmentsCount : 0
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-zinc-950 via-zinc-900 to-black text-zinc-100">
@@ -858,6 +894,19 @@ fetchCobranza(userId as string, role)
             >
               Cobranza
             </button>
+            
+            <button
+              type="button"
+              onClick={() => setView("daily-loans")}
+                className={`px-4 py-2 rounded-xl text-sm font-semibold transition ${
+                  view === "daily-loans"
+                  ? "bg-purple-600 text-white"
+                  : "text-zinc-200 hover:bg-zinc-900"
+               }`}
+              >
+              Préstamos diarios
+              </button>
+              
           </div>
         </div>
 
@@ -1364,12 +1413,190 @@ fetchCobranza(userId as string, role)
                 </div>
               </div>
             )}
-
+            
             <div className="mt-3 text-xs text-zinc-500">
               Nota: la mora se calcula con <b>late_fee_type</b> y <b>late_fee_value</b> de la operación (fijo diario o % diario).
             </div>
           </div>
         )}
+        {view === "daily-loans" && (
+  <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 backdrop-blur p-4 sm:p-6 shadow-xl mt-6">
+    <div className="text-lg font-semibold mb-1">Préstamos diarios</div>
+    <div className="text-xs text-zinc-400 mb-4">
+      Crear préstamos con cuotas diarias
+    </div>
+
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="space-y-4">
+        <div>
+          <div className="text-sm text-zinc-300 mb-2">Cliente</div>
+          <div className="flex gap-2 mb-3">
+            <button
+              type="button"
+              onClick={() => setDailyClientMode("existing")}
+              className={`px-3 py-2 rounded-xl text-sm border ${
+                dailyClientMode === "existing"
+                  ? "bg-emerald-600 text-white border-emerald-500"
+                  : "bg-zinc-950 text-zinc-200 border-zinc-800"
+              }`}
+            >
+              Existente
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setDailyClientMode("new")}
+              className={`px-3 py-2 rounded-xl text-sm border ${
+                dailyClientMode === "new"
+                  ? "bg-emerald-600 text-white border-emerald-500"
+                  : "bg-zinc-950 text-zinc-200 border-zinc-800"
+              }`}
+            >
+              Nuevo
+            </button>
+          </div>
+
+          {dailyClientMode === "existing" ? (
+            <select
+              value={dailySelectedClientId}
+              onChange={(e) => setDailySelectedClientId(e.target.value)}
+              className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
+            >
+              <option value="">Seleccionar cliente</option>
+              {clients.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {fullName(c.first_name, c.last_name)}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <input
+                type="text"
+                placeholder="Nombre"
+                value={dailyFirstName}
+                onChange={(e) => setDailyFirstName(e.target.value)}
+                className="px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
+              />
+              <input
+                type="text"
+                placeholder="Apellido"
+                value={dailyLastName}
+                onChange={(e) => setDailyLastName(e.target.value)}
+                className="px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
+              />
+              <input
+                type="text"
+                placeholder="DNI"
+                value={dailyDni}
+                onChange={(e) => setDailyDni(e.target.value)}
+                className="px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
+              />
+              <input
+                type="text"
+                placeholder="Teléfono"
+                value={dailyPhone}
+                onChange={(e) => setDailyPhone(e.target.value)}
+                className="px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
+              />
+              <input
+                type="text"
+                placeholder="Dirección"
+                value={dailyAddress}
+                onChange={(e) => setDailyAddress(e.target.value)}
+                className="sm:col-span-2 px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
+              />
+            </div>
+          )}
+        </div>
+
+        <div>
+          <div className="text-sm text-zinc-300 mb-2">Monto prestado</div>
+          <input
+            type="number"
+            value={dailyLoanAmount}
+            onChange={(e) => setDailyLoanAmount(e.target.value)}
+            className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
+            placeholder="Ej: 100000"
+          />
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <div className="text-sm text-zinc-300 mb-2">Plan</div>
+            <select
+              value={dailyLoanPlan}
+              onChange={(e) =>
+                setDailyLoanPlan(Number(e.target.value) as 12 | 17 | 24 | 36 | 48)
+              }
+              className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
+            >
+              <option value={12}>12 cuotas</option>
+              <option value={17}>17 cuotas</option>
+              <option value={24}>24 cuotas</option>
+              <option value={36}>36 cuotas</option>
+              <option value={48}>48 cuotas</option>
+            </select>
+          </div>
+
+          <div>
+            <div className="text-sm text-zinc-300 mb-2">Interés (%)</div>
+            <input
+              type="number"
+              value={dailyLoanInterest}
+              onChange={(e) => setDailyLoanInterest(e.target.value)}
+              className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
+            />
+          </div>
+        </div>
+
+        <div>
+          <div className="text-sm text-zinc-300 mb-2">Primer vencimiento</div>
+          <input
+            type="date"
+            value={dailyLoanFirstDueDate}
+            onChange={(e) => setDailyLoanFirstDueDate(e.target.value)}
+            className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
+          />
+        </div>
+      </div>
+
+      <div className="space-y-4">
+        <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
+          <div className="text-xs text-zinc-400">Monto base</div>
+          <div className="text-xl font-semibold text-zinc-100">
+            {money(dailyBaseAmount)}
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
+          <div className="text-xs text-zinc-400">Total con interés</div>
+          <div className="text-xl font-semibold text-emerald-300">
+            {money(dailyTotalAmount)}
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
+          <div className="text-xs text-zinc-400">Cuota diaria</div>
+          <div className="text-xl font-semibold text-sky-300">
+            {money(dailyInstallmentAmount)}
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
+          <div className="text-xs text-zinc-400">Cantidad de cuotas</div>
+          <div className="text-xl font-semibold text-zinc-100">
+            {dailyLoanPlan}
+          </div>
+        </div>
+
+        <div className="text-xs text-zinc-500">
+          Sugeridos: 12→20%, 17→35%, 24→45%, 36→75%, 48→100%.
+        </div>
+      </div>
+    </div>
+  </div>
+)}
       </div>
 
       {/* MODAL EDIT (solo admin) */}
