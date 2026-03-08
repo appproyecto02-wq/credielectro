@@ -879,7 +879,10 @@ async function createDailyClientIfNeeded(): Promise<string | null> {
 
 async function createDailyLoan() {
   if (!userId) return
+  if (savingDailyLoan) return
 
+  setSavingDailyLoan(true)
+  
   const clientId = await createDailyClientIfNeeded()
   if (!clientId) {
     alert("Seleccioná o creá un cliente.")
