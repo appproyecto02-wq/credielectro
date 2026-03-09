@@ -1552,7 +1552,7 @@ export default function Page() {
           </div>
         )}
 
-        {view === "daily-loans" && (
+        {view === "daily-loans" && role !== "admin" && (
           <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 backdrop-blur p-4 sm:p-6 shadow-xl mt-6">
             <div className="text-lg font-semibold mb-1">Préstamos diarios</div>
             <div className="text-xs text-zinc-400 mb-4">Crear préstamos con cuotas diarias</div>
