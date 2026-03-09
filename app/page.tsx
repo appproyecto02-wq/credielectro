@@ -33,7 +33,7 @@ type Operation = {
   client_id: string | null
 
   operation_type: "sale" | "loan"
-  frequency: "weekly" | "biweekly" | "three_weeks" | "monthly"
+  frequency: "daily" | "weekly" | "biweekly" | "three_weeks" | "monthly"
 
   base_amount: number
   interest_percent: number
@@ -86,6 +86,7 @@ type InstallmentRow = {
 }
 
 const freqLabel: Record<Operation["frequency"], string> = {
+  daily: "Diaria",
   weekly: "Semanal",
   biweekly: "Quincenal",
   three_weeks: "Cada 3 semanas",
@@ -94,7 +95,11 @@ const freqLabel: Record<Operation["frequency"], string> = {
 
 function money(n: number) {
   if (!Number.isFinite(n)) return "$ 0"
-  return n.toLocaleString("es-AR", { style: "currency", currency: "ARS", maximumFractionDigits: 0 })
+  return n.toLocaleString("es-AR", {
+    style: "currency",
+    currency: "ARS",
+    maximumFractionDigits: 0,
+  })
 }
 
 function toNumber(v: string) {
@@ -189,28 +194,29 @@ export default function Page() {
   const [dni, setDni] = useState("")
   const [phone, setPhone] = useState("")
   const [address, setAddress] = useState("")
+
   const DAILY_PLANS = {
-  12: 20,
-  17: 35,
-  24: 45,
-  36: 75,
-  48: 100,
-} as const
+    12: 20,
+    17: 35,
+    24: 45,
+    36: 75,
+    48: 100,
+  } as const
 
-const [dailyClientMode, setDailyClientMode] = useState<"existing" | "new">("existing")
-const [dailySelectedClientId, setDailySelectedClientId] = useState<string>("")
+  const [dailyClientMode, setDailyClientMode] = useState<"existing" | "new">("existing")
+  const [dailySelectedClientId, setDailySelectedClientId] = useState<string>("")
 
-const [dailyFirstName, setDailyFirstName] = useState("")
-const [dailyLastName, setDailyLastName] = useState("")
-const [dailyDni, setDailyDni] = useState("")
-const [dailyPhone, setDailyPhone] = useState("")
-const [dailyAddress, setDailyAddress] = useState("")
+  const [dailyFirstName, setDailyFirstName] = useState("")
+  const [dailyLastName, setDailyLastName] = useState("")
+  const [dailyDni, setDailyDni] = useState("")
+  const [dailyPhone, setDailyPhone] = useState("")
+  const [dailyAddress, setDailyAddress] = useState("")
 
-const [dailyLoanAmount, setDailyLoanAmount] = useState("")
-const [dailyLoanPlan, setDailyLoanPlan] = useState<12 | 17 | 24 | 36 | 48>(12)
-const [dailyLoanInterest, setDailyLoanInterest] = useState("20")
-const [dailyLoanFirstDueDate, setDailyLoanFirstDueDate] = useState("")
-const [savingDailyLoan, setSavingDailyLoan] = useState(false)
+  const [dailyLoanAmount, setDailyLoanAmount] = useState("")
+  const [dailyLoanPlan, setDailyLoanPlan] = useState<12 | 17 | 24 | 36 | 48>(12)
+  const [dailyLoanInterest, setDailyLoanInterest] = useState("20")
+  const [dailyLoanFirstDueDate, setDailyLoanFirstDueDate] = useState("")
+  const [savingDailyLoan, setSavingDailyLoan] = useState(false)
 
   const [operationType, setOperationType] = useState<Operation["operation_type"]>("sale")
   const [saleItem, setSaleItem] = useState("")
@@ -263,29 +269,17 @@ const [savingDailyLoan, setSavingDailyLoan] = useState(false)
   const [savingEdit, setSavingEdit] = useState(false)
 
   useEffect(() => {
-  setDailyLoanInterest(String(DAILY_PLANS[dailyLoanPlan]))
-}, [dailyLoanPlan])
-useEffect(() => {
-  const interestMap: Record<number, number> = {
-    12: 20,
-    17: 35,
-    24: 45,
-    36: 75,
-    48: 100,
-  }
+    setDailyLoanInterest(String(DAILY_PLANS[dailyLoanPlan]))
+  }, [dailyLoanPlan])
 
-  setDailyLoanInterest(String(interestMap[dailyLoanPlan] ?? 0))
-}, [dailyLoanPlan])
+  useEffect(() => {
+    if (dailyLoanFirstDueDate) return
 
-useEffect(() => {
-  if (dailyLoanFirstDueDate) return
+    const d = new Date()
+    d.setDate(d.getDate() + 1)
 
-  const d = new Date()
-  d.setDate(d.getDate() + 1)
-
-  setDailyLoanFirstDueDate(d.toISOString().slice(0, 10))
-}, [dailyLoanFirstDueDate])
-
+    setDailyLoanFirstDueDate(d.toISOString().slice(0, 10))
+  }, [dailyLoanFirstDueDate])
 
   // ---------- AUTH ----------
   useEffect(() => {
@@ -407,20 +401,20 @@ useEffect(() => {
 
     setOperations(ops)
   }
-function todayISO() {
-  const d = new Date()
-  return d.toISOString().split("T")[0]
-}
-async function fetchCobranza(currentUserId: string, currentRole: Role) {
-  setLoadingCobranza(true)
-  setErrorMsg(null)
 
-  try {
-    const today = todayISO()
+  function todayISO() {
+    const d = new Date()
+    return d.toISOString().split("T")[0]
+  }
 
-    let q = supabase
-      .from("installments")
-      .select(`
+  async function fetchCobranza(currentUserId: string, currentRole: Role) {
+    setLoadingCobranza(true)
+    setErrorMsg(null)
+
+    try {
+      const today = todayISO()
+
+      let q = supabase.from("installments").select(`
         id,
         operation_id,
         installment_number,
@@ -446,92 +440,88 @@ async function fetchCobranza(currentUserId: string, currentRole: Role) {
         )
       `)
 
-    // ✅ Si NO es admin (seller/cobrador): solo lo suyo + hoy y atrasadas + NO pagadas
-    if (currentRole !== "admin") {
-      q = q
-        .eq("operations.seller_id", currentUserId)
-        .neq("status", "paid")
-        .lte("due_date", today)
-    }
+      // Si NO es admin (seller/cobrador): solo lo suyo + hoy y atrasadas + NO pagadas
+      if (currentRole !== "admin") {
+        q = q.eq("operations.seller_id", currentUserId).neq("status", "paid").lte("due_date", today)
+      }
 
-    // Orden por vencimiento
-    q = q.order("due_date", { ascending: true })
+      q = q.order("due_date", { ascending: true })
 
-    const res = await q
-    if (res.error) {
-      console.error("fetchCobranza error:", res.error)
-      setErrorMsg(res.error.message)
+      const res = await q
+      if (res.error) {
+        console.error("fetchCobranza error:", res.error)
+        setErrorMsg(res.error.message)
+        setInstallmentsData([])
+        return
+      }
+
+      const rows = ((res.data as any[]) ?? []) as any[]
+
+      const normalized: InstallmentRow[] = rows.map((r) => {
+        const op = r?.operations ?? null
+        const c = op?.clients ?? null
+
+        return {
+          id: String(r.id),
+          operation_id: String(r.operation_id),
+          installment_number: Number(r.installment_number ?? 0),
+          due_date: r.due_date ?? null,
+          amount: r.amount ?? null,
+          status: (r.status ?? "pending") as InstallmentStatus,
+          paid_at: r.paid_at ?? null,
+
+          operation: op
+            ? {
+                id: String(op.id),
+                seller_id: String(op.seller_id),
+                client_id: op.client_id ?? null,
+                frequency: op.frequency,
+                installment_amount: Number(op.installment_amount ?? 0),
+                late_fee_type: op.late_fee_type ?? "fixed_daily",
+                late_fee_value: op.late_fee_value ?? 0,
+              }
+            : null,
+
+          client: c
+            ? {
+                id: String(c.id),
+                first_name: c.first_name ?? null,
+                last_name: c.last_name ?? null,
+                phone: c.phone ?? null,
+                address: c.address ?? null,
+              }
+            : null,
+        }
+      })
+
+      setInstallmentsData(normalized)
+    } catch (e: any) {
+      console.error("fetchCobranza exception:", e)
+      setErrorMsg(e?.message ?? "Error inesperado")
       setInstallmentsData([])
+    } finally {
+      setLoadingCobranza(false)
+    }
+  }
+
+  async function payInstallment(id: string) {
+    const { error } = await supabase
+      .from("installments")
+      .update({
+        status: "paid",
+        paid_at: new Date().toISOString(),
+      })
+      .eq("id", id)
+
+    if (error) {
+      alert("Error al registrar pago")
+      console.error(error)
       return
     }
 
-    const rows = ((res.data as any[]) ?? []) as any[]
-
-    // Normalizamos al tipo InstallmentRow
-    const normalized: InstallmentRow[] = rows.map((r) => {
-      const op = r?.operations ?? null
-      const c = op?.clients ?? null
-
-      return {
-        id: String(r.id),
-        operation_id: String(r.operation_id),
-        installment_number: Number(r.installment_number ?? 0),
-        due_date: r.due_date ?? null,
-        amount: r.amount ?? null,
-        status: (r.status ?? "pending") as InstallmentStatus,
-        paid_at: r.paid_at ?? null,
-
-        operation: op
-          ? {
-              id: String(op.id),
-              seller_id: String(op.seller_id),
-              client_id: op.client_id ?? null,
-              frequency: op.frequency,
-              installment_amount: Number(op.installment_amount ?? 0),
-              late_fee_type: op.late_fee_type ?? "fixed_daily",
-              late_fee_value: op.late_fee_value ?? 0,
-            }
-          : null,
-
-        client: c
-          ? {
-              id: String(c.id),
-              first_name: c.first_name ?? null,
-              last_name: c.last_name ?? null,
-              phone: c.phone ?? null,
-              address: c.address ?? null,
-            }
-          : null,
-      }
-    })
-
-    setInstallmentsData(normalized)
-  } catch (e: any) {
-    console.error("fetchCobranza exception:", e)
-    setErrorMsg(e?.message ?? "Error inesperado")
-    setInstallmentsData([])
-  } finally {
-    setLoadingCobranza(false)
+    fetchCobranza(userId as string, role)
   }
-}
-async function payInstallment(id: string) {
-  const { error } = await supabase
-    .from("installments")
-    .update({
-      status: "paid",
-      paid_at: new Date().toISOString(),
-    })
-    .eq("id", id)
 
-  if (error) {
-  alert("Error al registrar pago")
-  console.error(error)
-  return
-}
-
-// refresca tabla
-fetchCobranza(userId as string, role)
-}
   async function signOut() {
     await supabase.auth.signOut()
     router.replace("/login")
@@ -602,9 +592,8 @@ fetchCobranza(userId as string, role)
         interest_percent: interestPercentNum,
         installments_count: installmentsNum,
         notes: notes.trim() || null,
-        sale_item: operationType === "sale" ? (saleItem.trim() || null) : null,
-        loan_purpose: operationType === "loan" ? (loanPurpose.trim() || null) : null,
-        // first_due_date + installments: triggers en Supabase ✅
+        sale_item: operationType === "sale" ? saleItem.trim() || null : null,
+        loan_purpose: operationType === "loan" ? loanPurpose.trim() || null : null,
       }
 
       const res = await supabase.from("operations").insert(payload).select("id").single()
@@ -710,8 +699,8 @@ fetchCobranza(userId as string, role)
         total_amount: total,
         installment_amount: installmentAmount,
         notes: editNotes.trim() || null,
-        sale_item: editType === "sale" ? (editDetail.trim() || null) : null,
-        loan_purpose: editType === "loan" ? (editDetail.trim() || null) : null,
+        sale_item: editType === "sale" ? editDetail.trim() || null : null,
+        loan_purpose: editType === "loan" ? editDetail.trim() || null : null,
       }
 
       const opRes = await supabase.from("operations").update(opPayload).eq("id", editingOp.id)
@@ -747,7 +736,7 @@ fetchCobranza(userId as string, role)
   // ---------- COBRANZA: DERIVADOS ----------
   const cobranzaRows = useMemo(() => {
     const rows = installmentsData
-      .filter((r) => (r.status ?? "pending") !== "paid") // pendientes + atrasadas
+      .filter((r) => (r.status ?? "pending") !== "paid")
       .map((r) => {
         const op = r.operation
         const client = r.client
@@ -801,7 +790,7 @@ fetchCobranza(userId as string, role)
   // ---------- COBRANZA ACTIONS (solo seller/cobrador) ----------
   async function markInstallmentPaid(installmentId: string) {
     if (!userId) return
-    if (role === "admin") return // admin solo lectura
+    if (role === "admin") return
 
     setSavingCobranzaId(installmentId)
     try {
@@ -822,14 +811,11 @@ fetchCobranza(userId as string, role)
 
   async function markInstallmentNoPay(installmentId: string) {
     if (!userId) return
-    if (role === "admin") return // admin solo lectura
+    if (role === "admin") return
 
     setSavingCobranzaId(installmentId)
     try {
-      const res = await supabase
-      .from("installments")
-      .update({ status: "late", paid_at: null})
-      .eq("id", installmentId)
+      const res = await supabase.from("installments").update({ status: "late", paid_at: null }).eq("id", installmentId)
       if (res.error) {
         alert(res.error.message)
         return
@@ -839,155 +825,141 @@ fetchCobranza(userId as string, role)
       setSavingCobranzaId(null)
     }
   }
-async function createDailyClientIfNeeded(): Promise<string | null> {
-  if (dailyClientMode === "existing") return dailySelectedClientId || null
-  if (!userId) return null
 
-  const fn = dailyFirstName.trim()
-  const ln = dailyLastName.trim()
-  const d = dailyDni.trim()
-  const ph = dailyPhone.trim()
-  const addr = dailyAddress.trim()
+  async function createDailyClientIfNeeded(): Promise<string | null> {
+    if (dailyClientMode === "existing") return dailySelectedClientId || null
+    if (!userId) return null
 
-  if (!fn || !ln) {
-    alert("Completá nombre y apellido del cliente.")
-    return null
-  }
+    const fn = dailyFirstName.trim()
+    const ln = dailyLastName.trim()
+    const d = dailyDni.trim()
+    const ph = dailyPhone.trim()
+    const addr = dailyAddress.trim()
 
-  const res = await supabase
-    .from("clients")
-    .insert({
-      first_name: fn || null,
-      last_name: ln || null,
-      dni: d || null,
-      phone: ph || null,
-      address: addr || null,
-      created_by: userId,
-    })
-    .select("id")
-    .single()
+    if (!fn || !ln) {
+      alert("Completá nombre y apellido del cliente.")
+      return null
+    }
 
-  if (res.error) {
-    alert(res.error.message)
-    return null
-  }
-
-  await fetchClients(userId)
-
-  return (res.data as any)?.id ?? null
-}
-
-async function createDailyLoan() {
-  if (!userId) return
-  if (savingDailyLoan) return
-
-  setSavingDailyLoan(true)
-  
-  const clientId = await createDailyClientIfNeeded()
-  if (!clientId) {
-    alert("Seleccioná o creá un cliente.")
-    return
-  }
-
-  if (!dailyLoanAmount || Number(dailyLoanAmount) <= 0) {
-    alert("Ingresá un monto válido.")
-    return
-  }
-
-  if (!dailyLoanFirstDueDate) {
-    alert("Ingresá la fecha del primer vencimiento.")
-    return
-  }
-
-  setSavingDailyLoan(true)
-
-  try {
-    const baseAmount = Number(dailyLoanAmount)
-    const interestPercent = Number(dailyLoanInterest || 0)
-    const installmentsCount = Number(dailyLoanPlan)
-
-    const totalAmount =
-      baseAmount + baseAmount * (interestPercent / 100)
-
-    const installmentAmount =
-      installmentsCount > 0 ? totalAmount / installmentsCount : 0
-
-    const opRes = await supabase
-      .from("operations")
+    const res = await supabase
+      .from("clients")
       .insert({
-        seller_id: userId,
-        operation_type: "loan",
-        frequency: "daily",
-        client_id: clientId,
-        base_amount: baseAmount,
-        interest_percent: interestPercent,
-        installments_count: installmentsCount,
-        total_amount: totalAmount,
-        installment_amount: installmentAmount,
-        loan_purpose: "Préstamo diario",
-        first_due_date: dailyLoanFirstDueDate,
+        first_name: fn || null,
+        last_name: ln || null,
+        dni: d || null,
+        phone: ph || null,
+        address: addr || null,
+        created_by: userId,
       })
       .select("id")
       .single()
 
-    if (opRes.error) {
-      alert(opRes.error.message)
-      return
+    if (res.error) {
+      alert(res.error.message)
+      return null
     }
 
-    const operationId = (opRes.data as any)?.id as string
-
-    await supabase
-  .from("installments")
-  .delete()
-  .eq("operation_id", operationId)
-  
-    const installmentsToInsert = Array.from({ length: installmentsCount }, (_, i) => {
-      const due = new Date(dailyLoanFirstDueDate + "T00:00:00")
-      due.setDate(due.getDate() + i)
-
-      return {
-        operation_id: operationId,
-        installment_number: i + 1,
-        due_date: due.toISOString().slice(0, 10),
-        amount: installmentAmount,
-        status: "pending",
-        paid_at: null,
-      }
-    })
-
-    const insRes = await supabase
-      .from("installments")
-      .upsert(installmentsToInsert, { onConflict: "operation_id,installment_number"})
-
-    if (insRes.error) {
-      alert(insRes.error.message)
-      return
-    }
-
-    await fetchOperations(userId, role)
-    await fetchCobranza(userId, role)
-
-    setDailyClientMode("existing")
-    setDailySelectedClientId("")
-    setDailyFirstName("")
-    setDailyLastName("")
-    setDailyDni("")
-    setDailyPhone("")
-    setDailyAddress("")
-    setDailyLoanAmount("")
-    setDailyLoanPlan(12)
-    setDailyLoanInterest("20")
-
-    const tomorrow = new Date()
-    tomorrow.setDate(tomorrow.getDate() + 1)
-    setDailyLoanFirstDueDate(tomorrow.toISOString().slice(0, 10))
-
-    alert("Préstamo diario creado correctamente.")
-  } finally {
-    setSavingDailyLoan(false)
+    await fetchClients(userId)
+    return (res.data as any)?.id ?? null
   }
-}
+
+  async function createDailyLoan() {
+    if (!userId || savingDailyLoan) return
+
+    setSavingDailyLoan(true)
+    try {
+      const clientId = await createDailyClientIfNeeded()
+      if (!clientId) {
+        alert("Seleccioná o creá un cliente.")
+        return
+      }
+
+      if (!dailyLoanAmount || Number(dailyLoanAmount) <= 0) {
+        alert("Ingresá un monto válido.")
+        return
+      }
+
+      if (!dailyLoanFirstDueDate) {
+        alert("Ingresá la fecha del primer vencimiento.")
+        return
+      }
+
+      const baseAmount = Number(dailyLoanAmount)
+      const interestPercent = Number(dailyLoanInterest || 0)
+      const installmentsCount = Number(dailyLoanPlan)
+
+      const totalAmount = baseAmount + baseAmount * (interestPercent / 100)
+      const installmentAmount = installmentsCount > 0 ? totalAmount / installmentsCount : 0
+
+      const opRes = await supabase
+        .from("operations")
+        .insert({
+          seller_id: userId,
+          operation_type: "loan",
+          frequency: "daily",
+          client_id: clientId,
+          base_amount: baseAmount,
+          interest_percent: interestPercent,
+          installments_count: installmentsCount,
+          total_amount: totalAmount,
+          installment_amount: installmentAmount,
+          loan_purpose: "Préstamo diario",
+          first_due_date: dailyLoanFirstDueDate,
+        })
+        .select("id")
+        .single()
+
+      if (opRes.error) {
+        alert(opRes.error.message)
+        return
+      }
+
+      const operationId = (opRes.data as any)?.id as string
+
+      const installmentsToInsert = Array.from({ length: installmentsCount }, (_, i) => {
+        const due = new Date(dailyLoanFirstDueDate + "T00:00:00")
+        due.setDate(due.getDate() + i)
+
+        return {
+          operation_id: operationId,
+          installment_number: i + 1,
+          due_date: due.toISOString().slice(0, 10),
+          amount: installmentAmount,
+          status: "pending",
+          paid_at: null,
+        }
+      })
+
+      const insRes = await supabase.from("installments").insert(installmentsToInsert)
+
+      if (insRes.error) {
+        alert(insRes.error.message)
+        return
+      }
+
+      await fetchOperations(userId, role)
+      await fetchCobranza(userId, role)
+
+      setDailyClientMode("existing")
+      setDailySelectedClientId("")
+      setDailyFirstName("")
+      setDailyLastName("")
+      setDailyDni("")
+      setDailyPhone("")
+      setDailyAddress("")
+      setDailyLoanAmount("")
+      setDailyLoanPlan(12)
+      setDailyLoanInterest("20")
+
+      const tomorrow = new Date()
+      tomorrow.setDate(tomorrow.getDate() + 1)
+      setDailyLoanFirstDueDate(tomorrow.toISOString().slice(0, 10))
+
+      alert("Préstamo diario creado correctamente.")
+    } finally {
+      setSavingDailyLoan(false)
+    }
+  }
 
   // ---------- UI ----------
   if (loading) {
@@ -997,16 +969,15 @@ async function createDailyLoan() {
       </div>
     )
   }
-  
+
   const dailyBaseAmount = Number(dailyLoanAmount || 0)
-const dailyInterestPercent = Number(dailyLoanInterest || 0)
-const dailyInstallmentsCount = Number(dailyLoanPlan || 0)
+  const dailyInterestPercent = Number(dailyLoanInterest || 0)
+  const dailyInstallmentsCount = Number(dailyLoanPlan || 0)
 
-const dailyTotalAmount =
-  dailyBaseAmount + dailyBaseAmount * (dailyInterestPercent / 100)
+  const dailyTotalAmount = dailyBaseAmount + dailyBaseAmount * (dailyInterestPercent / 100)
 
-const dailyInstallmentAmount =
-  dailyInstallmentsCount > 0 ? dailyTotalAmount / dailyInstallmentsCount : 0
+  const dailyInstallmentAmount =
+    dailyInstallmentsCount > 0 ? dailyTotalAmount / dailyInstallmentsCount : 0
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-zinc-950 via-zinc-900 to-black text-zinc-100">
@@ -1064,19 +1035,16 @@ const dailyInstallmentAmount =
             >
               Cobranza
             </button>
-            
+
             <button
               type="button"
               onClick={() => setView("daily-loans")}
-                className={`px-4 py-2 rounded-xl text-sm font-semibold transition ${
-                  view === "daily-loans"
-                  ? "bg-purple-600 text-white"
-                  : "text-zinc-200 hover:bg-zinc-900"
-               }`}
-              >
+              className={`px-4 py-2 rounded-xl text-sm font-semibold transition ${
+                view === "daily-loans" ? "bg-purple-600 text-white" : "text-zinc-200 hover:bg-zinc-900"
+              }`}
+            >
               Préstamos diarios
-              </button>
-              
+            </button>
           </div>
         </div>
 
@@ -1157,34 +1125,34 @@ const dailyInstallmentAmount =
                         onChange={(e) => setLastName(e.target.value)}
                       />
                     </div>
-
-                    <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <input
-                        className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
-                        placeholder="DNI"
-                        value={dni}
-                        onChange={(e) => setDni(e.target.value)}
-                        inputMode="numeric"
-                      />
-                      <input
-                        className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
-                        placeholder="Celular"
-                        value={phone}
-                        onChange={(e) => setPhone(e.target.value)}
-                        inputMode="tel"
-                      />
-                    </div>
-
-                    <div className="mt-3">
-                      <input
-                        className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
-                        placeholder="Dirección"
-                        value={address}
-                        onChange={(e) => setAddress(e.target.value)}
-                      />
-                    </div>
                   </>
                 )}
+
+                <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <input
+                    className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
+                    placeholder="DNI"
+                    value={dni}
+                    onChange={(e) => setDni(e.target.value)}
+                    inputMode="numeric"
+                  />
+                  <input
+                    className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
+                    placeholder="Celular"
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                    inputMode="tel"
+                  />
+                </div>
+
+                <div className="mt-3">
+                  <input
+                    className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
+                    placeholder="Dirección"
+                    value={address}
+                    onChange={(e) => setAddress(e.target.value)}
+                  />
+                </div>
               </div>
 
               {/* Tipo */}
@@ -1206,17 +1174,17 @@ const dailyInstallmentAmount =
 
               {/* Detalle */}
               <div className="mb-4">
-                <div className="text-sm text-zinc-300 mb-2">{operationType === "sale" ? "Qué se vendió" : "Motivo del préstamo"}</div>
+                <div className="text-sm text-zinc-300 mb-2">
+                  {operationType === "sale" ? "Qué se vendió" : "Motivo del préstamo"}
+                </div>
                 <input
-  className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
-  placeholder={operationType === "sale" ? 'Ej: "Heladera", "Moto"...' : 'Ej: "Efectivo", "Compra"...'}
-  value={operationType === "sale" ? saleItem : loanPurpose}
-  onChange={(e) =>
-    operationType === "sale"
-      ? setSaleItem(e.target.value)
-      : setLoanPurpose(e.target.value)
-  }
-/>
+                  className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
+                  placeholder={operationType === "sale" ? 'Ej: "Heladera", "Moto"...' : 'Ej: "Efectivo", "Compra"...'}
+                  value={operationType === "sale" ? saleItem : loanPurpose}
+                  onChange={(e) =>
+                    operationType === "sale" ? setSaleItem(e.target.value) : setLoanPurpose(e.target.value)
+                  }
+                />
               </div>
 
               {/* Frecuencia */}
@@ -1310,104 +1278,95 @@ const dailyInstallmentAmount =
             </div>
 
             {/* tabla seller */}
-            {view === "ops" && (
             <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 backdrop-blur p-4 sm:p-6 shadow-xl">
-              <OperationsTable 
-              role={role} 
-              operations={operations}/>
+              <OperationsTable role={role} operations={operations} />
             </div>
           </div>
         )}
 
         {/* ADMIN OPS */}
-        {view === "ops" && role === "admin" && (
+        {role === "admin" && view === "ops" && (
           <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 backdrop-blur p-4 sm:p-6 shadow-xl">
             <OperationsTable role={role} operations={operations} onEdit={startEditOperation} onDelete={deleteOperation} />
           </div>
         )}
+
         {role === "admin" && (
-        <div className="mt-6 rounded-2xl border border-zinc-800 bg-zinc-950/60 backdrop-blur p-4 sm:p-6 shadow-xl">
-    <div className="flex items-center justify-between mb-3">
-      <div>
-        <div className="text-lg font-semibold">Cobranza (vista admin)</div> 
-        <div className="text-xs text-zinc-400">Pendientes + Pagadas (control general)</div>
-      </div>
-      <button
-        type="button"
-        onClick={() => fetchCobranza(userId!, role)}
-        className="px-3 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800"
-        disabled={loadingCobranza}
-      >
-        {loadingCobranza ? "Cargando..." : "Refrescar"}
-      </button>
-    </div>
-      
-    <div className="overflow-x-auto border border-zinc-800 rounded-xl bg-zinc-950/40 backdrop-blur">
-      <table className="min-w-[1200px] w-full text-sm table-auto border-collapse">
-        <thead className="bg-zinc-900">
-          <tr>
-            <th className="text-left p-2 border-b border-zinc-800">Cliente</th>
-            <th className="text-left p-2 border-b border-zinc-800">Vence</th>
-            <th className="text-left p-2 border-b border-zinc-800">Cuota #</th>
-            <th className="text-left p-2 border-b border-zinc-800">Estado</th>
-            <th className="text-left p-2 border-b border-zinc-800">Monto</th>
-            <th className="text-left p-2 border-b border-zinc-800">Pagado el</th>
-          </tr>
-        </thead>
-        <tbody>
-  {installmentsData.length === 0 ? (
-    <tr>
-      <td className="p-3 text-zinc-400" colSpan={6}>
-        No hay datos de cobranza
-      </td>
-    </tr>
-  ) : (
-    installmentsData.map((r) => (
-      <tr key={r.id} className="odd:bg-zinc-950/40 hover:bg-zinc-900/40">
-        <td className="p-2 border-b border-zinc-900">
-          <div className="font-semibold">
-            {fullName(r.client?.first_name, r.client?.last_name)}
+          <div className="mt-6 rounded-2xl border border-zinc-800 bg-zinc-950/60 backdrop-blur p-4 sm:p-6 shadow-xl">
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <div className="text-lg font-semibold">Cobranza (vista admin)</div>
+                <div className="text-xs text-zinc-400">Pendientes + Pagadas (control general)</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => fetchCobranza(userId!, role)}
+                className="px-3 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800"
+                disabled={loadingCobranza}
+              >
+                {loadingCobranza ? "Cargando..." : "Refrescar"}
+              </button>
+            </div>
+
+            <div className="overflow-x-auto border border-zinc-800 rounded-xl bg-zinc-950/40 backdrop-blur">
+              <table className="min-w-[1200px] w-full text-sm table-auto border-collapse">
+                <thead className="bg-zinc-900">
+                  <tr>
+                    <th className="text-left p-2 border-b border-zinc-800">Cliente</th>
+                    <th className="text-left p-2 border-b border-zinc-800">Vence</th>
+                    <th className="text-left p-2 border-b border-zinc-800">Cuota #</th>
+                    <th className="text-left p-2 border-b border-zinc-800">Estado</th>
+                    <th className="text-left p-2 border-b border-zinc-800">Monto</th>
+                    <th className="text-left p-2 border-b border-zinc-800">Pagado el</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {installmentsData.length === 0 ? (
+                    <tr>
+                      <td className="p-3 text-zinc-400" colSpan={6}>
+                        No hay datos de cobranza
+                      </td>
+                    </tr>
+                  ) : (
+                    installmentsData.map((r) => (
+                      <tr key={r.id} className="odd:bg-zinc-950/40 hover:bg-zinc-900/40">
+                        <td className="p-2 border-b border-zinc-900">
+                          <div className="font-semibold">{fullName(r.client?.first_name, r.client?.last_name)}</div>
+                          <div className="text-xs text-zinc-400">
+                            {r.client?.phone ?? ""}
+                            {r.client?.address ?? ""}
+                          </div>
+                        </td>
+
+                        <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{dateAR(r.due_date)}</td>
+
+                        <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{r.installment_number}</td>
+
+                        <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{String(r.status)}</td>
+
+                        <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
+                          {money(Number(r.amount ?? r.operation?.installment_amount ?? 0))}
+                        </td>
+
+                        <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
+                          {r.status !== "paid" && (
+                            <button
+                              onClick={() => payInstallment(r.id)}
+                              className="px-3 py-1 bg-green-600 hover:bg-green-700 rounded text-white text-xs"
+                            >
+                              Pagado
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
-          <div className="text-xs text-zinc-400">
-          {r.client?.phone ?? ""}
-          {r.client?.address ?? ""}
-        </div>
-        </td>
-
-        <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
-          {dateAR(r.due_date)}
-        </td>
-
-        <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
-          {r.installment_number}
-        </td>
-
-        <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
-          {String(r.status)}
-        </td>
-
-        <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
-          {money(Number(r.amount ?? r.operation?.installment_amount ?? 0))}
-        </td>
-
-        <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
-        {r.status !== "paid" && (
-        <button
-      onClick={() => payInstallment(r.id)}
-      className="px-3 py-1 bg-green-600 hover:bg-green-700 rounded text-white text-xs"
-    >
-      Pagado
-    </button>
-  )}
-</td>
-      </tr>
-    ))
-  )}
-</tbody>
-      </table>
-    </div>
-  </div>
         )}
+
         {/* COBRANZA (integrada) */}
         {view === "cobranza" && (
           <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 backdrop-blur p-4 sm:p-6 shadow-xl">
@@ -1452,7 +1411,7 @@ const dailyInstallmentAmount =
                 <tbody>
                   {cobranzaRows.length === 0 ? (
                     <tr>
-                      <td className="p-3 text-zinc-400" colSpan={role === "admin" ? 9 : 10}>
+                      <td className="p-3 text-zinc-400" colSpan={9}>
                         No hay cuotas pendientes 🎉
                       </td>
                     </tr>
@@ -1460,9 +1419,7 @@ const dailyInstallmentAmount =
                     cobranzaRows.map((r: any) => (
                       <tr key={r.id} className="odd:bg-zinc-950/40 hover:bg-zinc-900/40 transition">
                         {role === "admin" && (
-                          <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
-                            {r.seller_name ?? "Vendedor"}
-                          </td>
+                          <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{r.seller_name ?? "Vendedor"}</td>
                         )}
                         <td className="p-2 border-b border-zinc-900">
                           <div className="font-semibold">{r._clientName}</div>
@@ -1525,7 +1482,7 @@ const dailyInstallmentAmount =
                 </tbody>
               </table>
             </div>
-          
+
             {/* ADMIN: Cobrado hoy (solo lectura) */}
             {role === "admin" && (
               <div className="mt-6">
@@ -1571,7 +1528,9 @@ const dailyInstallmentAmount =
                             return (
                               <tr key={r.id} className="odd:bg-zinc-950/40 hover:bg-zinc-900/40 transition">
                                 <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{dateTimeAR(r.paid_at)}</td>
-                                <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{r.seller_name ?? "Vendedor"}</td>
+                                <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
+                                  {r.seller_name ?? "Vendedor"}
+                                </td>
                                 <td className="p-2 border-b border-zinc-900">{clientName}</td>
                                 <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{r.installment_number}</td>
                                 <td className="p-2 border-b border-zinc-900 whitespace-nowrap text-emerald-300 font-semibold">
@@ -1586,200 +1545,188 @@ const dailyInstallmentAmount =
                 </div>
               </div>
             )}
-            
+
             <div className="mt-3 text-xs text-zinc-500">
               Nota: la mora se calcula con <b>late_fee_type</b> y <b>late_fee_value</b> de la operación (fijo diario o % diario).
             </div>
           </div>
         )}
+
         {view === "daily-loans" && (
-  <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 backdrop-blur p-4 sm:p-6 shadow-xl mt-6">
-    <div className="text-lg font-semibold mb-1">Préstamos diarios</div>
-    <div className="text-xs text-zinc-400 mb-4">
-      Crear préstamos con cuotas diarias
-    </div>
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 backdrop-blur p-4 sm:p-6 shadow-xl mt-6">
+            <div className="text-lg font-semibold mb-1">Préstamos diarios</div>
+            <div className="text-xs text-zinc-400 mb-4">Crear préstamos con cuotas diarias</div>
 
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-      <div className="space-y-4">
-        <div>
-          <div className="text-sm text-zinc-300 mb-2">Cliente</div>
-          <div className="flex gap-2 mb-3">
-            <button
-              type="button"
-              onClick={() => setDailyClientMode("existing")}
-              className={`px-3 py-2 rounded-xl text-sm border ${
-                dailyClientMode === "existing"
-                  ? "bg-emerald-600 text-white border-emerald-500"
-                  : "bg-zinc-950 text-zinc-200 border-zinc-800"
-              }`}
-            >
-              Existente
-            </button>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div className="space-y-4">
+                <div>
+                  <div className="text-sm text-zinc-300 mb-2">Cliente</div>
+                  <div className="flex gap-2 mb-3">
+                    <button
+                      type="button"
+                      onClick={() => setDailyClientMode("existing")}
+                      className={`px-3 py-2 rounded-xl text-sm border ${
+                        dailyClientMode === "existing"
+                          ? "bg-emerald-600 text-white border-emerald-500"
+                          : "bg-zinc-950 text-zinc-200 border-zinc-800"
+                      }`}
+                    >
+                      Existente
+                    </button>
 
-            <button
-              type="button"
-              onClick={() => setDailyClientMode("new")}
-              className={`px-3 py-2 rounded-xl text-sm border ${
-                dailyClientMode === "new"
-                  ? "bg-emerald-600 text-white border-emerald-500"
-                  : "bg-zinc-950 text-zinc-200 border-zinc-800"
-              }`}
-            >
-              Nuevo
-            </button>
-          </div>
+                    <button
+                      type="button"
+                      onClick={() => setDailyClientMode("new")}
+                      className={`px-3 py-2 rounded-xl text-sm border ${
+                        dailyClientMode === "new"
+                          ? "bg-emerald-600 text-white border-emerald-500"
+                          : "bg-zinc-950 text-zinc-200 border-zinc-800"
+                      }`}
+                    >
+                      Nuevo
+                    </button>
+                  </div>
 
-          {dailyClientMode === "existing" ? (
-            <select
-              value={dailySelectedClientId}
-              onChange={(e) => setDailySelectedClientId(e.target.value)}
-              className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
-            >
-              <option value="">Seleccionar cliente</option>
-              {clients.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {fullName(c.first_name, c.last_name)}
-                </option>
-              ))}
-            </select>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <input
-                type="text"
-                placeholder="Nombre"
-                value={dailyFirstName}
-                onChange={(e) => setDailyFirstName(e.target.value)}
-                className="px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
-              />
-              <input
-                type="text"
-                placeholder="Apellido"
-                value={dailyLastName}
-                onChange={(e) => setDailyLastName(e.target.value)}
-                className="px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
-              />
-              <input
-                type="text"
-                placeholder="DNI"
-                value={dailyDni}
-                onChange={(e) => setDailyDni(e.target.value)}
-                className="px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
-              />
-              <input
-                type="text"
-                placeholder="Teléfono"
-                value={dailyPhone}
-                onChange={(e) => setDailyPhone(e.target.value)}
-                className="px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
-              />
-              <input
-                type="text"
-                placeholder="Dirección"
-                value={dailyAddress}
-                onChange={(e) => setDailyAddress(e.target.value)}
-                className="sm:col-span-2 px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
-              />
+                  {dailyClientMode === "existing" ? (
+                    <select
+                      value={dailySelectedClientId}
+                      onChange={(e) => setDailySelectedClientId(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
+                    >
+                      <option value="">Seleccionar cliente</option>
+                      {clients.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {fullName(c.first_name, c.last_name)}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <input
+                        type="text"
+                        placeholder="Nombre"
+                        value={dailyFirstName}
+                        onChange={(e) => setDailyFirstName(e.target.value)}
+                        className="px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
+                      />
+                      <input
+                        type="text"
+                        placeholder="Apellido"
+                        value={dailyLastName}
+                        onChange={(e) => setDailyLastName(e.target.value)}
+                        className="px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
+                      />
+                      <input
+                        type="text"
+                        placeholder="DNI"
+                        value={dailyDni}
+                        onChange={(e) => setDailyDni(e.target.value)}
+                        className="px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
+                      />
+                      <input
+                        type="text"
+                        placeholder="Teléfono"
+                        value={dailyPhone}
+                        onChange={(e) => setDailyPhone(e.target.value)}
+                        className="px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
+                      />
+                      <input
+                        type="text"
+                        placeholder="Dirección"
+                        value={dailyAddress}
+                        onChange={(e) => setDailyAddress(e.target.value)}
+                        className="sm:col-span-2 px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
+                      />
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <div className="text-sm text-zinc-300 mb-2">Monto prestado</div>
+                  <input
+                    type="number"
+                    value={dailyLoanAmount}
+                    onChange={(e) => setDailyLoanAmount(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
+                    placeholder="Ej: 100000"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <div className="text-sm text-zinc-300 mb-2">Plan</div>
+                    <select
+                      value={dailyLoanPlan}
+                      onChange={(e) => setDailyLoanPlan(Number(e.target.value) as 12 | 17 | 24 | 36 | 48)}
+                      className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
+                    >
+                      <option value={12}>12 cuotas</option>
+                      <option value={17}>17 cuotas</option>
+                      <option value={24}>24 cuotas</option>
+                      <option value={36}>36 cuotas</option>
+                      <option value={48}>48 cuotas</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <div className="text-sm text-zinc-300 mb-2">Interés (%)</div>
+                    <input
+                      type="number"
+                      value={dailyLoanInterest}
+                      onChange={(e) => setDailyLoanInterest(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <div className="text-sm text-zinc-300 mb-2">Primer vencimiento</div>
+                  <input
+                    type="date"
+                    value={dailyLoanFirstDueDate}
+                    onChange={(e) => setDailyLoanFirstDueDate(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
+                  <div className="text-xs text-zinc-400">Monto base</div>
+                  <div className="text-xl font-semibold text-zinc-100">{money(dailyBaseAmount)}</div>
+                </div>
+
+                <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
+                  <div className="text-xs text-zinc-400">Total con interés</div>
+                  <div className="text-xl font-semibold text-emerald-300">{money(dailyTotalAmount)}</div>
+                </div>
+
+                <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
+                  <div className="text-xs text-zinc-400">Cuota diaria</div>
+                  <div className="text-xl font-semibold text-sky-300">{money(dailyInstallmentAmount)}</div>
+                </div>
+
+                <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
+                  <div className="text-xs text-zinc-400">Cantidad de cuotas</div>
+                  <div className="text-xl font-semibold text-zinc-100">{dailyLoanPlan}</div>
+                </div>
+
+                <div className="text-xs text-zinc-500">Sugeridos: 12→20%, 17→35%, 24→45%, 36→75%, 48→100%.</div>
+              </div>
             </div>
-          )}
-        </div>
 
-        <div>
-          <div className="text-sm text-zinc-300 mb-2">Monto prestado</div>
-          <input
-            type="number"
-            value={dailyLoanAmount}
-            onChange={(e) => setDailyLoanAmount(e.target.value)}
-            className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
-            placeholder="Ej: 100000"
-          />
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div>
-            <div className="text-sm text-zinc-300 mb-2">Plan</div>
-            <select
-              value={dailyLoanPlan}
-              onChange={(e) =>
-                setDailyLoanPlan(Number(e.target.value) as 12 | 17 | 24 | 36 | 48)
-              }
-              className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
-            >
-              <option value={12}>12 cuotas</option>
-              <option value={17}>17 cuotas</option>
-              <option value={24}>24 cuotas</option>
-              <option value={36}>36 cuotas</option>
-              <option value={48}>48 cuotas</option>
-            </select>
+            <div className="mt-6 flex justify-end">
+              <button
+                type="button"
+                onClick={createDailyLoan}
+                disabled={savingDailyLoan}
+                className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white font-semibold"
+              >
+                {savingDailyLoan ? "Guardando..." : "Crear préstamo diario"}
+              </button>
+            </div>
           </div>
-
-          <div>
-            <div className="text-sm text-zinc-300 mb-2">Interés (%)</div>
-            <input
-              type="number"
-              value={dailyLoanInterest}
-              onChange={(e) => setDailyLoanInterest(e.target.value)}
-              className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
-            />
-          </div>
-        </div>
-
-        <div>
-          <div className="text-sm text-zinc-300 mb-2">Primer vencimiento</div>
-          <input
-            type="date"
-            value={dailyLoanFirstDueDate}
-            onChange={(e) => setDailyLoanFirstDueDate(e.target.value)}
-            className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
-          />
-        </div>
-      </div>
-
-      <div className="space-y-4">
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
-          <div className="text-xs text-zinc-400">Monto base</div>
-          <div className="text-xl font-semibold text-zinc-100">
-            {money(dailyBaseAmount)}
-          </div>
-        </div>
-
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
-          <div className="text-xs text-zinc-400">Total con interés</div>
-          <div className="text-xl font-semibold text-emerald-300">
-            {money(dailyTotalAmount)}
-          </div>
-        </div>
-
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
-          <div className="text-xs text-zinc-400">Cuota diaria</div>
-          <div className="text-xl font-semibold text-sky-300">
-            {money(dailyInstallmentAmount)}
-          </div>
-        </div>
-
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
-          <div className="text-xs text-zinc-400">Cantidad de cuotas</div>
-          <div className="text-xl font-semibold text-zinc-100">
-            {dailyLoanPlan}
-          </div>
-        </div>
-
-        <div className="text-xs text-zinc-500">
-          Sugeridos: 12→20%, 17→35%, 24→45%, 36→75%, 48→100%.
-        </div>
-      </div>
-    </div>
-  <div className="mt-6 flex justify-end">
-  <button
-    type="button"
-    onClick={createDailyLoan}
-    disabled={savingDailyLoan}
-    className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white font-semibold"
-  >
-    {savingDailyLoan ? "Guardando..." : "Crear préstamo diario"}
-  </button>
-</div>
-</div>
-)}
+        )}
       </div>
 
       {/* MODAL EDIT (solo admin) */}
@@ -1976,7 +1923,9 @@ function OperationsTable({
         <table className="min-w-[1200px] w-full text-sm table-auto border-collapse">
           <thead className="bg-zinc-900">
             <tr>
-              {role === "admin" && <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Vendedor</th>}
+              {role === "admin" && (
+                <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Vendedor</th>
+              )}
               <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Fecha</th>
               <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">1ra cuota</th>
               <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Tipo</th>
@@ -1987,7 +1936,9 @@ function OperationsTable({
               <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Total</th>
               <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Cuotas</th>
               <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Cuota</th>
-              {canAdminActions && <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Acciones</th>}
+              {canAdminActions && (
+                <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Acciones</th>
+              )}
             </tr>
           </thead>
 
@@ -2007,15 +1958,21 @@ function OperationsTable({
                       <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{op.seller_name ?? "Vendedor"}</td>
                     )}
 
-                    <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{new Date(op.created_at).toLocaleString("es-AR")}</td>
+                    <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
+                      {new Date(op.created_at).toLocaleString("es-AR")}
+                    </td>
 
                     <td className="p-2 border-b border-zinc-900 whitespace-nowrap text-emerald-300 font-semibold">
                       {dateAR(op.first_due_date)}
                     </td>
 
-                    <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{op.operation_type === "sale" ? "Venta" : "Préstamo"}</td>
+                    <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
+                      {op.operation_type === "sale" ? "Venta" : "Préstamo"}
+                    </td>
 
-                    <td className="p-2 border-b border-zinc-900 min-w-[220px]">{detail || <span className="text-zinc-500">—</span>}</td>
+                    <td className="p-2 border-b border-zinc-900 min-w-[220px]">
+                      {detail || <span className="text-zinc-500">—</span>}
+                    </td>
 
                     <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{freqLabel[op.frequency]}</td>
 
@@ -2023,7 +1980,9 @@ function OperationsTable({
 
                     <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{op.interest_percent}%</td>
 
-                    <td className="p-2 border-b border-zinc-900 whitespace-nowrap text-sky-300 font-semibold">{money(op.total_amount)}</td>
+                    <td className="p-2 border-b border-zinc-900 whitespace-nowrap text-sky-300 font-semibold">
+                      {money(op.total_amount)}
+                    </td>
 
                     <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{op.installments_count}</td>
 
@@ -2032,10 +1991,18 @@ function OperationsTable({
                     {canAdminActions && (
                       <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
                         <div className="flex gap-2">
-                          <button className="px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700" onClick={() => onEdit?.(op)} type="button">
+                          <button
+                            className="px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700"
+                            onClick={() => onEdit?.(op)}
+                            type="button"
+                          >
                             Editar
                           </button>
-                          <button className="px-2 py-1 rounded bg-red-600 hover:bg-red-500" onClick={() => onDelete?.(op.id)} type="button">
+                          <button
+                            className="px-2 py-1 rounded bg-red-600 hover:bg-red-500"
+                            onClick={() => onDelete?.(op.id)}
+                            type="button"
+                          >
                             Borrar
                           </button>
                         </div>
