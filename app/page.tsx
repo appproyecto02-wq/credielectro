@@ -1310,14 +1310,17 @@ const dailyInstallmentAmount =
             </div>
 
             {/* tabla seller */}
+            {view === "ops" && (
             <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 backdrop-blur p-4 sm:p-6 shadow-xl">
-              <OperationsTable role={role} operations={operations} />
+              <OperationsTable 
+              role={role} 
+              operations={operations}/>
             </div>
           </div>
         )}
 
         {/* ADMIN OPS */}
-        {role === "admin" &&  (
+        {view === "ops" && role === "admin" && (
           <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 backdrop-blur p-4 sm:p-6 shadow-xl">
             <OperationsTable role={role} operations={operations} onEdit={startEditOperation} onDelete={deleteOperation} />
           </div>
