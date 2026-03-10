@@ -175,7 +175,7 @@ export default function Page() {
 
   // view mode (admin y seller)
   const [view, setView] = useState<"ops" | "cobranza" | "daily-loans">("ops")
-  
+
   const [reportMonth, setReportMonth] = useState(() => {
   const now = new Date()
   const y = now.getFullYear()
@@ -1306,9 +1306,11 @@ export default function Page() {
     <div className="mb-4">
   <div className="text-sm text-zinc-300 mb-2">Seleccionar mes</div>
   <input
-    type="month"
-    className="px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
-  />
+  type="month"
+  value={reportMonth}
+  onChange={(e) => setReportMonth(e.target.value)}
+  className="px-3 py-2 rounded-xl bg-zinc-800 text-white border border-zinc-600"
+/>
 </div>
 
     <div className="rounded-xl border border-dashed border-zinc-700 p-4 text-sm text-zinc-400">
