@@ -4,6 +4,7 @@
   "description": "Sistema de gestión de préstamos y cobranza",
   "start_url": "/",
   "display": "standalone",
+  "id": "/",
   "background_color": "#09090b",
   "theme_color": "#09090b",
   "orientation": "portrait",
