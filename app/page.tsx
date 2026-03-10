@@ -967,6 +967,30 @@ export default function Page() {
     }
   }
 
+const reportMonthRange = useMemo(() => {
+  const [year, month] = reportMonth.split("-").map(Number)
+
+  if (!year || !month) {
+    return {
+      start: null as Date | null,
+      end: null as Date | null,
+    }
+  }
+
+  const start = new Date(year, month - 1, 1)
+  const end = new Date(year, month, 0, 23, 59, 59, 999)
+
+  return { start, end }
+}, [reportMonth])
+const reportMonthLabel = useMemo(() => {
+  if (!reportMonthRange.start) return "—"
+
+  return reportMonthRange.start.toLocaleDateString("es-AR", {
+    year: "numeric",
+    month: "long",
+  })
+}, [reportMonthRange])
+
   // ---------- UI ----------
   if (loading) {
     return (
@@ -1314,8 +1338,8 @@ export default function Page() {
 </div>
 
     <div className="rounded-xl border border-dashed border-zinc-700 p-4 text-sm text-zinc-400">
-      Próximamente: selector de mes + resumen mensual.
-    </div>
+  Mes seleccionado: <span className="text-zinc-200 font-medium">{reportMonthLabel}</span>
+</div>
   </div>
 )}
 
