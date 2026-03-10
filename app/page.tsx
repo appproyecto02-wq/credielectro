@@ -175,7 +175,13 @@ export default function Page() {
 
   // view mode (admin y seller)
   const [view, setView] = useState<"ops" | "cobranza" | "daily-loans">("ops")
-
+  
+  const [reportMonth, setReportMonth] = useState(() => {
+  const now = new Date()
+  const y = now.getFullYear()
+  const m = String(now.getMonth() + 1).padStart(2, "0")
+  return ${y}-${m}
+})
   // seller data
   const [clients, setClients] = useState<Client[]>([])
   const [operations, setOperations] = useState<Operation[]>([])
