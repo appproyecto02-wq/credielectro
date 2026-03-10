@@ -1,0 +1,1 @@
+force-icon-fix  add redeploy.txt public/manifest.json public/icon192.png public/icon512.pnggit commit -m "force redeploy pwa icons"git push
