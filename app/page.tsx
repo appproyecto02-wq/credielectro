@@ -1291,6 +1291,26 @@ export default function Page() {
           </div>
         )}
 
+        {role === "admin" && view === "ops" && (
+  <div className="mt-6 rounded-2xl border border-zinc-800 bg-zinc-950/60 backdrop-blur p-4 sm:p-6 shadow-xl">
+    <div className="text-lg font-semibold mb-1">Reporte mensual</div>
+    <div className="text-xs text-zinc-400 mb-4">
+      Acá vamos a mostrar operaciones cerradas, abiertas y resumen económico del mes.
+    </div>
+    <div className="mb-4">
+  <div className="text-sm text-zinc-300 mb-2">Seleccionar mes</div>
+  <input
+    type="month"
+    className="px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
+  />
+</div>
+
+    <div className="rounded-xl border border-dashed border-zinc-700 p-4 text-sm text-zinc-400">
+      Próximamente: selector de mes + resumen mensual.
+    </div>
+  </div>
+)}
+
         {role === "admin" && (
           <div className="mt-6 rounded-2xl border border-zinc-800 bg-zinc-950/60 backdrop-blur p-4 sm:p-6 shadow-xl">
             <div className="flex items-center justify-between mb-3">
