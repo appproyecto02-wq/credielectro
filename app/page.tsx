@@ -990,6 +990,65 @@ const reportMonthLabel = useMemo(() => {
     month: "long",
   })
 }, [reportMonthRange])
+const reportOpsSummary = useMemo(() => {
+  const [year, month] = reportMonth.split("-").map(Number)
+  if (!year || !month) {
+    return {
+      closedOps: [] as Operation[],
+      openOps: [] as Operation[],
+    }
+  }
+
+  const monthStart = new Date(year, month - 1, 1)
+  const monthEnd = new Date(year, month, 0, 23, 59, 59, 999)
+
+  const installmentsByOp = new Map<string, InstallmentRow[]>()
+
+  for (const row of installmentsData) {
+    if (!installmentsByOp.has(row.operation_id)) {
+      installmentsByOp.set(row.operation_id, [])
+    }
+    installmentsByOp.get(row.operation_id)!.push(row)
+  }
+
+  const closedOps: Operation[] = []
+  const openOps: Operation[] = []
+
+  for (const op of operations) {
+    const rows = installmentsByOp.get(op.id) ?? []
+
+    if (rows.length === 0) {
+      openOps.push(op)
+      continue
+    }
+
+    const allPaid = rows.every((r) => r.status === "paid")
+
+    if (!allPaid) {
+      openOps.push(op)
+      continue
+    }
+
+    const paidDates = rows
+      .map((r) => r.paid_at)
+      .filter(Boolean)
+      .map((d) => new Date(d as string).getTime())
+      .filter((n) => Number.isFinite(n))
+
+    if (paidDates.length === 0) {
+      openOps.push(op)
+      continue
+    }
+
+    const closedAt = new Date(Math.max(...paidDates))
+
+    if (closedAt >= monthStart && closedAt <= monthEnd) {
+      closedOps.push(op)
+    }
+  }
+
+  return { closedOps, openOps }
+}, [reportMonth, operations, installmentsData])
 
   // ---------- UI ----------
   if (loading) {
@@ -1339,6 +1398,21 @@ const reportMonthLabel = useMemo(() => {
 
     <div className="rounded-xl border border-dashed border-zinc-700 p-4 text-sm text-zinc-400">
   Mes seleccionado: <span className="text-zinc-200 font-medium">{reportMonthLabel}</span>
+</div>
+<div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
+  <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
+    <div className="text-xs text-zinc-400">Operaciones cerradas del mes</div>
+    <div className="text-2xl font-semibold text-emerald-300">
+      {reportOpsSummary.closedOps.length}
+    </div>
+  </div>
+
+  <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
+    <div className="text-xs text-zinc-400">Operaciones abiertas</div>
+    <div className="text-2xl font-semibold text-amber-300">
+      {reportOpsSummary.openOps.length}
+    </div>
+  </div>
 </div>
   </div>
 )}
