@@ -899,22 +899,22 @@ export default function Page() {
       installmentsCount > 0 ? totalAmount / installmentsCount : 0
 
     const opRes = await supabase
-      .from("operations")
-      .insert({
-        seller_id: userId,
-        operation_type: "loan",
-        frequency: "daily",
-        client_id: clientId,
-        base_amount: baseAmount,
-        interest_percent: interestPercent,
-        installments_count: installmentsCount,
-        total_amount: totalAmount,
-        installment_amount: installmentAmount,
-        loan_purpose: "Préstamo diario",
-        first_due_date: dailyLoanFirstDueDate,
-      })
-      .select("id")
-      .single()
+  .from("operations")
+  .insert({
+    seller_id: userId,
+    client_id: selectedClientId,
+    operation_type: operationType,
+    frequency: frequency,
+    base_amount: baseAmountNum,
+    interest_percent: interestPercentNum,
+    installments_count: installmentsNum,
+    total_amount: totalAmount,
+    installment_amount: installmentAmount,
+    notes: notes || null,
+    first_due_date: firstDueDate || null,
+  })
+  .select("id")
+  .single()
 
     if (opRes.error) {
       alert(opRes.error.message)
