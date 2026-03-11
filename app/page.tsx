@@ -180,7 +180,7 @@ export default function Page() {
   const now = new Date()
   const y = now.getFullYear()
   const m = String(now.getMonth() + 1).padStart(2, "0")
-  return ${y}-${m}
+  return `${y}-${m}`
 })
   // seller data
   const [clients, setClients] = useState<Client[]>([])
@@ -982,6 +982,7 @@ const reportMonthRange = useMemo(() => {
 
   return { start, end }
 }, [reportMonth])
+
 const reportMonthLabel = useMemo(() => {
   if (!reportMonthRange.start) return "—"
 
@@ -990,8 +991,10 @@ const reportMonthLabel = useMemo(() => {
     month: "long",
   })
 }, [reportMonthRange])
+
 const reportOpsSummary = useMemo(() => {
   const [year, month] = reportMonth.split("-").map(Number)
+
   if (!year || !month) {
     return {
       closedOps: [] as Operation[],
@@ -1001,7 +1004,6 @@ const reportOpsSummary = useMemo(() => {
 
   const monthStart = new Date(year, month - 1, 1)
   const monthEnd = new Date(year, month, 0, 23, 59, 59, 999)
-
   const installmentsByOp = new Map<string, InstallmentRow[]>()
 
   for (const row of installmentsData) {
@@ -1023,7 +1025,6 @@ const reportOpsSummary = useMemo(() => {
     }
 
     const allPaid = rows.every((r) => r.status === "paid")
-
     if (!allPaid) {
       openOps.push(op)
       continue
@@ -1044,13 +1045,48 @@ const reportOpsSummary = useMemo(() => {
 
     if (closedAt >= monthStart && closedAt <= monthEnd) {
       closedOps.push(op)
+    } else {
+      openOps.push(op)
     }
   }
 
   return { closedOps, openOps }
 }, [reportMonth, operations, installmentsData])
 
-  // ---------- UI ----------
+const reportEconomicSummary = useMemo(() => {
+  const closedCapital = reportOpsSummary.closedOps.reduce((acc, op) => acc + Number(op.base_amount ?? 0), 0)
+  const openCapital = reportOpsSummary.openOps.reduce((acc, op) => acc + Number(op.base_amount ?? 0), 0)
+  const interestEarned = reportOpsSummary.closedOps.reduce(
+    (acc, op) => acc + Math.max(0, Number(op.total_amount ?? 0) - Number(op.base_amount ?? 0)),
+    0
+  )
+
+  const paidByOperation = new Map<string, number>()
+
+  for (const row of installmentsData) {
+    const current = paidByOperation.get(row.operation_id) ?? 0
+    const amount = Number(row.amount ?? row.operation?.installment_amount ?? 0)
+
+    if (row.status === "paid") {
+      paidByOperation.set(row.operation_id, current + amount)
+    }
+  }
+
+  const pendingToCollect = reportOpsSummary.openOps.reduce((acc, op) => {
+    const paid = paidByOperation.get(op.id) ?? 0
+    const total = Number(op.total_amount ?? 0)
+    return acc + Math.max(0, total - paid)
+  }, 0)
+
+  return {
+    closedCapital,
+    openCapital,
+    pendingToCollect,
+    interestEarned,
+  }
+}, [reportOpsSummary, installmentsData])
+
+// ---------- UI ----------
   if (loading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-zinc-950 via-zinc-900 to-black text-zinc-100 flex items-center justify-center">
@@ -1072,7 +1108,7 @@ const reportOpsSummary = useMemo(() => {
     <div className="min-h-screen bg-gradient-to-br from-zinc-950 via-zinc-900 to-black text-zinc-100">
       <div className="max-w-6xl mx-auto p-4 sm:p-8">
         {/* Top bar */}
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-5">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-5">
           <div>
             <div className="text-2xl font-semibold tracking-tight">CrediElectro Dyn</div>
             <div className="text-sm text-zinc-400">
@@ -1080,8 +1116,8 @@ const reportOpsSummary = useMemo(() => {
               {profile?.name ? <span className="text-zinc-400"> • {profile.name}</span> : null}
             </div>
           </div>
-
-          <div className="flex gap-2">
+          
+          <div className="grid grid-cols-2 gap-2 sm:flex">
             <button
               type="button"
               onClick={async () => {
@@ -1100,8 +1136,8 @@ const reportOpsSummary = useMemo(() => {
         </div>
 
         {/* NAV (admin + seller) */}
-        <div className="mb-6">
-          <div className="inline-flex rounded-2xl border border-zinc-800 bg-zinc-950/60 backdrop-blur p-1">
+        <div className="mb-6 overflow-x-auto pb-1">
+          <div className="inline-flex min-w-full sm:min-w-0 rounded-2xl border border-zinc-800 bg-zinc-950/60 backdrop-blur p-1 gap-1">
             <button
               type="button"
               onClick={() => setView("ops")}
@@ -1125,15 +1161,17 @@ const reportOpsSummary = useMemo(() => {
               Cobranza
             </button>
 
-            <button
-              type="button"
-              onClick={() => setView("daily-loans")}
-              className={`px-4 py-2 rounded-xl text-sm font-semibold transition ${
-                view === "daily-loans" ? "bg-purple-600 text-white" : "text-zinc-200 hover:bg-zinc-900"
-              }`}
-            >
-              Préstamos diarios
-            </button>
+            {role !== "admin" && (
+              <button
+                type="button"
+                onClick={() => setView("daily-loans")}
+                className={`px-4 py-2 rounded-xl text-sm font-semibold transition ${
+                  view === "daily-loans" ? "bg-purple-600 text-white" : "text-zinc-200 hover:bg-zinc-900"
+                }`}
+              >
+                Préstamos diarios
+              </button>
+            )}
           </div>
         </div>
 
@@ -1381,41 +1419,43 @@ const reportOpsSummary = useMemo(() => {
         )}
 
         {role === "admin" && view === "ops" && (
-  <div className="mt-6 rounded-2xl border border-zinc-800 bg-zinc-950/60 backdrop-blur p-4 sm:p-6 shadow-xl">
-    <div className="text-lg font-semibold mb-1">Reporte mensual</div>
-    <div className="text-xs text-zinc-400 mb-4">
-      Acá vamos a mostrar operaciones cerradas, abiertas y resumen económico del mes.
-    </div>
-    <div className="mb-4">
-  <div className="text-sm text-zinc-300 mb-2">Seleccionar mes</div>
-  <input
-  type="month"
-  value={reportMonth}
-  onChange={(e) => setReportMonth(e.target.value)}
-  className="px-3 py-2 rounded-xl bg-zinc-800 text-white border border-zinc-600"
-/>
-</div>
+          <div className="mt-6 rounded-2xl border border-zinc-800 bg-zinc-950/60 backdrop-blur p-4 sm:p-6 shadow-xl">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <div className="text-lg font-semibold mb-1">Reporte mensual</div>
+                <div className="text-xs text-zinc-400">
+                  Operaciones cerradas, abiertas y resumen económico del mes elegido.
+                </div>
+              </div>
 
-    <div className="rounded-xl border border-dashed border-zinc-700 p-4 text-sm text-zinc-400">
-  Mes seleccionado: <span className="text-zinc-200 font-medium">{reportMonthLabel}</span>
-</div>
-<div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
-  <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
-    <div className="text-xs text-zinc-400">Operaciones cerradas del mes</div>
-    <div className="text-2xl font-semibold text-emerald-300">
-      {reportOpsSummary.closedOps.length}
-    </div>
-  </div>
+              <div className="w-full sm:w-auto">
+                <div className="text-sm text-zinc-300 mb-2">Seleccionar mes</div>
+                <input
+                  type="month"
+                  value={reportMonth}
+                  onChange={(e) => setReportMonth(e.target.value)}
+                  className="w-full sm:w-auto px-3 py-2 rounded-xl bg-zinc-800 text-white border border-zinc-600"
+                />
+              </div>
+            </div>
 
-  <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
-    <div className="text-xs text-zinc-400">Operaciones abiertas</div>
-    <div className="text-2xl font-semibold text-amber-300">
-      {reportOpsSummary.openOps.length}
-    </div>
-  </div>
-</div>
-  </div>
-)}
+            <div className="mt-4 rounded-xl border border-dashed border-zinc-700 p-4 text-sm text-zinc-400">
+              Mes seleccionado: <span className="text-zinc-200 font-medium capitalize">{reportMonthLabel}</span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 mt-4">
+              <ReportCard label="Operaciones cerradas del mes" value={String(reportOpsSummary.closedOps.length)} tone="emerald" />
+              <ReportCard label="Operaciones abiertas" value={String(reportOpsSummary.openOps.length)} tone="amber" />
+              <ReportCard label="Capital recuperado" value={money(reportEconomicSummary.closedCapital)} tone="emerald" />
+              <ReportCard label="Capital en la calle" value={money(reportEconomicSummary.openCapital)} tone="amber" />
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
+              <ReportCard label="Pendiente por cobrar" value={money(reportEconomicSummary.pendingToCollect)} tone="sky" />
+              <ReportCard label="Interés ganado en cerradas" value={money(reportEconomicSummary.interestEarned)} tone="violet" />
+            </div>
+          </div>
+        )}
 
         {role === "admin" && (
           <div className="mt-6 rounded-2xl border border-zinc-800 bg-zinc-950/60 backdrop-blur p-4 sm:p-6 shadow-xl">
@@ -1514,7 +1554,79 @@ const reportOpsSummary = useMemo(() => {
             </div>
 
             {/* Pendientes / Atrasadas */}
-            <div className="overflow-x-auto border border-zinc-800 rounded-xl bg-zinc-950/40 backdrop-blur">
+            <div className="md:hidden space-y-3 mb-4">
+              {cobranzaRows.length === 0 ? (
+                <div className="rounded-xl border border-zinc-800 bg-zinc-950/40 p-4 text-sm text-zinc-400">
+                  No hay cuotas pendientes 🎉
+                </div>
+              ) : (
+                cobranzaRows.map((r: any) => (
+                  <div key={r.id} className="rounded-2xl border border-zinc-800 bg-zinc-950/40 p-4 shadow-sm">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="font-semibold text-zinc-100">{r._clientName}</div>
+                        <div className="text-xs text-zinc-400 mt-1">Vence: {dateAR(r.due_date)} · Cuota #{r.installment_number}</div>
+                      </div>
+                      {role === "admin" && (
+                        <span className="text-[11px] rounded-full border border-zinc-700 px-2 py-1 text-zinc-300">
+                          {r.seller_name ?? "Vendedor"}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3 mt-4 text-sm">
+                      <div className="rounded-xl bg-zinc-900/60 p-3">
+                        <div className="text-xs text-zinc-400">Monto</div>
+                        <div className="font-semibold text-sky-300">{money(r._amount)}</div>
+                      </div>
+                      <div className="rounded-xl bg-zinc-900/60 p-3">
+                        <div className="text-xs text-zinc-400">Total a cobrar</div>
+                        <div className="font-semibold text-emerald-300">{money(r._totalToPay)}</div>
+                      </div>
+                      <div className="rounded-xl bg-zinc-900/60 p-3">
+                        <div className="text-xs text-zinc-400">Atraso</div>
+                        <div className="font-semibold text-amber-300">{r._daysLate > 0 ? `${r._daysLate} días` : '0 días'}</div>
+                      </div>
+                      <div className="rounded-xl bg-zinc-900/60 p-3">
+                        <div className="text-xs text-zinc-400">Mora</div>
+                        <div className="font-semibold text-amber-300">{r._lateFee > 0 ? money(r._lateFee) : '—'}</div>
+                      </div>
+                    </div>
+
+                    {(r._clientPhone || r._clientAddress) && (
+                      <div className="text-xs text-zinc-400 mt-3">
+                        {r._clientPhone ? `📞 ${r._clientPhone}` : ''}
+                        {r._clientPhone && r._clientAddress ? ' · ' : ''}
+                        {r._clientAddress ? `📍 ${r._clientAddress}` : ''}
+                      </div>
+                    )}
+
+                    {role !== "admin" && (
+                      <div className="grid grid-cols-2 gap-2 mt-4">
+                        <button
+                          type="button"
+                          onClick={() => markInstallmentPaid(r.id)}
+                          disabled={savingCobranzaId === r.id}
+                          className="w-full px-3 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 font-semibold"
+                        >
+                          {savingCobranzaId === r.id ? 'Guardando...' : 'Pagó'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => markInstallmentNoPay(r.id)}
+                          disabled={savingCobranzaId === r.id}
+                          className="w-full px-3 py-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 disabled:opacity-60 font-semibold"
+                        >
+                          No pagó
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="hidden md:block overflow-x-auto border border-zinc-800 rounded-xl bg-zinc-950/40 backdrop-blur">
               <table className="min-w-[1300px] w-full text-sm table-auto border-collapse">
                 <thead className="bg-zinc-900">
                   <tr>
@@ -1608,7 +1720,7 @@ const reportOpsSummary = useMemo(() => {
                 </tbody>
               </table>
             </div>
-
+          
             {/* ADMIN: Cobrado hoy (solo lectura) */}
             {role === "admin" && (
               <div className="mt-6">
@@ -2045,13 +2157,81 @@ function OperationsTable({
         <div className="text-lg font-semibold">Operaciones</div>
       </div>
 
-      <div className="overflow-x-auto border border-zinc-800 rounded-xl bg-zinc-950/40 backdrop-blur">
+      <div className="md:hidden space-y-3">
+        {operations.length === 0 ? (
+          <div className="rounded-xl border border-zinc-800 bg-zinc-950/40 p-4 text-sm text-zinc-400">No hay operaciones.</div>
+        ) : (
+          operations.map((op) => {
+            const detail = op.operation_type === "sale" ? op.sale_item : op.loan_purpose
+            return (
+              <div key={op.id} className="rounded-2xl border border-zinc-800 bg-zinc-950/40 p-4 shadow-sm">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="font-semibold text-zinc-100">{detail || "Sin detalle"}</div>
+                    <div className="text-xs text-zinc-400 mt-1">{op.operation_type === "sale" ? "Venta" : "Préstamo"} · {freqLabel[op.frequency]}</div>
+                  </div>
+                  {role === "admin" && (
+                    <span className="text-[11px] rounded-full border border-zinc-700 px-2 py-1 text-zinc-300">
+                      {op.seller_name ?? "Vendedor"}
+                    </span>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-2 gap-3 mt-4 text-sm">
+                  <div className="rounded-xl bg-zinc-900/60 p-3">
+                    <div className="text-xs text-zinc-400">Fecha</div>
+                    <div>{new Date(op.created_at).toLocaleDateString("es-AR")}</div>
+                  </div>
+                  <div className="rounded-xl bg-zinc-900/60 p-3">
+                    <div className="text-xs text-zinc-400">1ra cuota</div>
+                    <div className="text-emerald-300 font-semibold">{dateAR(op.first_due_date)}</div>
+                  </div>
+                  <div className="rounded-xl bg-zinc-900/60 p-3">
+                    <div className="text-xs text-zinc-400">Total</div>
+                    <div className="text-sky-300 font-semibold">{money(op.total_amount)}</div>
+                  </div>
+                  <div className="rounded-xl bg-zinc-900/60 p-3">
+                    <div className="text-xs text-zinc-400">Cuota</div>
+                    <div>{money(op.installment_amount)}</div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-3 mt-3 text-sm">
+                  <div>
+                    <div className="text-xs text-zinc-500">Base</div>
+                    <div>{money(op.base_amount)}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-zinc-500">Interés</div>
+                    <div>{op.interest_percent}%</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-zinc-500">Cuotas</div>
+                    <div>{op.installments_count}</div>
+                  </div>
+                </div>
+
+                {canAdminActions && (
+                  <div className="grid grid-cols-2 gap-2 mt-4">
+                    <button className="w-full px-3 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700" onClick={() => onEdit?.(op)} type="button">
+                      Editar
+                    </button>
+                    <button className="w-full px-3 py-2 rounded-xl bg-red-600 hover:bg-red-500" onClick={() => onDelete?.(op.id)} type="button">
+                      Borrar
+                    </button>
+                  </div>
+                )}
+              </div>
+            )
+          })
+        )}
+      </div>
+
+      <div className="hidden md:block overflow-x-auto border border-zinc-800 rounded-xl bg-zinc-950/40 backdrop-blur">
         <table className="min-w-[1200px] w-full text-sm table-auto border-collapse">
           <thead className="bg-zinc-900">
             <tr>
-              {role === "admin" && (
-                <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Vendedor</th>
-              )}
+              {role === "admin" && <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Vendedor</th>}
               <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Fecha</th>
               <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">1ra cuota</th>
               <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Tipo</th>
@@ -2062,9 +2242,7 @@ function OperationsTable({
               <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Total</th>
               <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Cuotas</th>
               <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Cuota</th>
-              {canAdminActions && (
-                <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Acciones</th>
-              )}
+              {canAdminActions && <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Acciones</th>}
             </tr>
           </thead>
 
@@ -2084,51 +2262,24 @@ function OperationsTable({
                       <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{op.seller_name ?? "Vendedor"}</td>
                     )}
 
-                    <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
-                      {new Date(op.created_at).toLocaleString("es-AR")}
-                    </td>
-
-                    <td className="p-2 border-b border-zinc-900 whitespace-nowrap text-emerald-300 font-semibold">
-                      {dateAR(op.first_due_date)}
-                    </td>
-
-                    <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
-                      {op.operation_type === "sale" ? "Venta" : "Préstamo"}
-                    </td>
-
-                    <td className="p-2 border-b border-zinc-900 min-w-[220px]">
-                      {detail || <span className="text-zinc-500">—</span>}
-                    </td>
-
+                    <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{new Date(op.created_at).toLocaleString("es-AR")}</td>
+                    <td className="p-2 border-b border-zinc-900 whitespace-nowrap text-emerald-300 font-semibold">{dateAR(op.first_due_date)}</td>
+                    <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{op.operation_type === "sale" ? "Venta" : "Préstamo"}</td>
+                    <td className="p-2 border-b border-zinc-900 min-w-[220px]">{detail || <span className="text-zinc-500">—</span>}</td>
                     <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{freqLabel[op.frequency]}</td>
-
                     <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{money(op.base_amount)}</td>
-
                     <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{op.interest_percent}%</td>
-
-                    <td className="p-2 border-b border-zinc-900 whitespace-nowrap text-sky-300 font-semibold">
-                      {money(op.total_amount)}
-                    </td>
-
+                    <td className="p-2 border-b border-zinc-900 whitespace-nowrap text-sky-300 font-semibold">{money(op.total_amount)}</td>
                     <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{op.installments_count}</td>
-
                     <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{money(op.installment_amount)}</td>
 
                     {canAdminActions && (
                       <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
                         <div className="flex gap-2">
-                          <button
-                            className="px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700"
-                            onClick={() => onEdit?.(op)}
-                            type="button"
-                          >
+                          <button className="px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700" onClick={() => onEdit?.(op)} type="button">
                             Editar
                           </button>
-                          <button
-                            className="px-2 py-1 rounded bg-red-600 hover:bg-red-500"
-                            onClick={() => onDelete?.(op.id)}
-                            type="button"
-                          >
+                          <button className="px-2 py-1 rounded bg-red-600 hover:bg-red-500" onClick={() => onDelete?.(op.id)} type="button">
                             Borrar
                           </button>
                         </div>
@@ -2141,6 +2292,30 @@ function OperationsTable({
           </tbody>
         </table>
       </div>
+    </div>
+  )
+}
+
+function ReportCard({
+  label,
+  value,
+  tone,
+}: {
+  label: string
+  value: string
+  tone: "emerald" | "amber" | "sky" | "violet"
+}) {
+  const toneClass = {
+    emerald: "text-emerald-300",
+    amber: "text-amber-300",
+    sky: "text-sky-300",
+    violet: "text-violet-300",
+  }[tone]
+
+  return (
+    <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
+      <div className="text-xs text-zinc-400">{label}</div>
+      <div className={`text-2xl font-semibold ${toneClass}`}>{value}</div>
     </div>
   )
 }
