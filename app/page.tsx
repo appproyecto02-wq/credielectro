@@ -894,9 +894,11 @@ export default function Page() {
     const interestPercent = Number(dailyLoanInterest || 0)
     const installmentsCount = Number(dailyLoanPlan)
 
-    const totalAmount = baseAmount + baseAmount * (interestPercent / 100)
-    const installmentAmount =
-      installmentsCount > 0 ? totalAmount / installmentsCount : 0
+    const totalAmount =
+  baseAmountNum + baseAmountNum * (interestPercentNum / 100)
+
+const installmentAmount =
+  installmentsNum > 0 ? totalAmount / installmentsNum : 0
 
     const opRes = await supabase
   .from("operations")
