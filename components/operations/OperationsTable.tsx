@@ -30,8 +30,10 @@ function money(n: number) {
 }
 
 function dateAR(d: string | null) {
-  if (!d) return "-"
-  return new Date(d).toLocaleDateString("es-AR")
+  if (!d) return ""
+
+  const [y, m, day] = d.split("-")
+  return ${day}/${m}/${y}
 }
 
 export default function OperationsTable({
