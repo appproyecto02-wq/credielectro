@@ -9,7 +9,7 @@ type Operation = {
   seller_id: string
   client_id: string | null
   operation_type: "sale" | "loan"
-  frequency: "weekly" | "biweekly" | "three_weeks" | "monthly"
+  frequency: "daily" | "weekly" | "biweekly" | "three_weeks" | "monthly"
   base_amount: number
   interest_percent: number
   installments_count: number
@@ -32,8 +32,11 @@ function money(n: number) {
 function dateAR(d: string | null) {
   if (!d) return ""
 
-  const [y, m, day] = d.split("-")
-  return ${day}/${m}/${y}
+  const onlyDate = d.slice(0, 10)
+  const [y, m, day] = onlyDate.split("-")
+  if (!y || !m || !day) return d
+
+  return `${day}/${m}/${y}`
 }
 
 export default function OperationsTable({

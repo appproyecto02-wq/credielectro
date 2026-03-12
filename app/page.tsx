@@ -120,9 +120,8 @@ function dateAR(d: string | null | undefined) {
 
   if (!y || !m || !day) return d
 
-  return ${day}/${m}/${y}
+  return `${day}/${m}/${y}`
 }
-
 
 function dateTimeAR(d: string | null | undefined) {
   if (!d) return "—"
@@ -132,6 +131,15 @@ function dateTimeAR(d: string | null | undefined) {
     return "—"
   }
 }
+
+function toLocalISODate(date: Date) {
+  const yyyy = date.getFullYear()
+  const mm = String(date.getMonth() + 1).padStart(2, "0")
+  const dd = String(date.getDate()).padStart(2, "0")
+
+  return `${yyyy}-${mm}-${dd}`
+}
+
 
 function startOfToday() {
   const now = new Date()
@@ -284,14 +292,11 @@ export default function Page() {
   useEffect(() => {
     if (dailyLoanFirstDueDate) return
 
-    const tomorrow = new Date()
-tomorrow.setDate(tomorrow.getDate() + 1)
+    const d = new Date()
+    d.setDate(d.getDate() + 1)
 
-const yyyy = tomorrow.getFullYear()
-const mm = String(tomorrow.getMonth() + 1).padStart(2, "0")
-const dd = String(tomorrow.getDate()).padStart(2, "0")
-
-setDailyLoanFirstDueDate(${yyyy}-${mm}-${dd})
+    setDailyLoanFirstDueDate(toLocalISODate(d))
+  }, [dailyLoanFirstDueDate])
 
   // ---------- AUTH ----------
   useEffect(() => {
@@ -415,14 +420,7 @@ setDailyLoanFirstDueDate(${yyyy}-${mm}-${dd})
   }
 
   function todayISO() {
-   function todayISO() {
-  const d = new Date()
-
-  const yyyy = d.getFullYear()
-  const mm = String(d.getMonth() + 1).padStart(2, "0")
-  const dd = String(d.getDate()).padStart(2, "0")
-
-  return ${yyyy}-${mm}-${dd}
+    return toLocalISODate(new Date())
   }
 
   async function fetchCobranza(currentUserId: string, currentRole: Role) {
@@ -609,6 +607,8 @@ setDailyLoanFirstDueDate(${yyyy}-${mm}-${dd})
         base_amount: baseAmountNum,
         interest_percent: interestPercentNum,
         installments_count: installmentsNum,
+        total_amount: previewTotal,
+        installment_amount: previewInstallment,
         notes: notes.trim() || null,
         sale_item: operationType === "sale" ? saleItem.trim() || null : null,
         loan_purpose: operationType === "loan" ? loanPurpose.trim() || null : null,
@@ -787,12 +787,7 @@ setDailyLoanFirstDueDate(${yyyy}-${mm}-${dd})
     return rows
   }, [installmentsData])
 
-const d = new Date()
-const yyyy = d.getFullYear()
-const mm = String(d.getMonth() + 1).padStart(2, "0")
-const dd = String(d.getDate()).padStart(2, "0")
-
-const hoyISO = ${yyyy}-${mm}-${dd}
+  const hoyISO = todayISO()
 
   const cuotasParaHoy = useMemo(() => {
     return cobranzaRows.filter((r) => (r.due_date ?? "").slice(0, 10) === hoyISO)
@@ -887,87 +882,81 @@ const hoyISO = ${yyyy}-${mm}-${dd}
   }
 
   async function createDailyLoan() {
-  if (!userId || savingDailyLoan) return
+    if (!userId || savingDailyLoan) return
 
-  setSavingDailyLoan(true)
-  try {
-    const clientId = await createDailyClientIfNeeded()
-    if (!clientId) {
-      alert("Seleccioná o creá un cliente.")
-      return
+    setSavingDailyLoan(true)
+    try {
+      const clientId = await createDailyClientIfNeeded()
+      if (!clientId) {
+        alert("Seleccioná o creá un cliente.")
+        return
+      }
+
+      if (!dailyLoanAmount || Number(dailyLoanAmount) <= 0) {
+        alert("Ingresá un monto válido.")
+        return
+      }
+
+      if (!dailyLoanFirstDueDate) {
+        alert("Ingresá la fecha del primer vencimiento.")
+        return
+      }
+
+      const baseAmount = Number(dailyLoanAmount)
+      const interestPercent = Number(dailyLoanInterest || 0)
+      const installmentsCount = Number(dailyLoanPlan)
+
+      const totalAmount = baseAmount + baseAmount * (interestPercent / 100)
+      const installmentAmount = installmentsCount > 0 ? totalAmount / installmentsCount : 0
+
+      const opRes = await supabase
+        .from("operations")
+        .insert({
+          seller_id: userId,
+          operation_type: "loan",
+          frequency: "daily",
+          client_id: clientId,
+          base_amount: baseAmount,
+          interest_percent: interestPercent,
+          installments_count: installmentsCount,
+          total_amount: totalAmount,
+          installment_amount: installmentAmount,
+          loan_purpose: "Préstamo diario",
+          first_due_date: dailyLoanFirstDueDate,
+        })
+        .select("id")
+        .single()
+
+      if (opRes.error) {
+        alert(opRes.error.message)
+        return
+      }
+
+
+      await fetchOperations(userId, role)
+      await fetchCobranza(userId, role)
+
+      setDailyClientMode("existing")
+      setDailySelectedClientId("")
+      setDailyFirstName("")
+      setDailyLastName("")
+      setDailyDni("")
+      setDailyPhone("")
+      setDailyAddress("")
+      setDailyLoanAmount("")
+      setDailyLoanPlan(12)
+      setDailyLoanInterest("20")
+
+      const tomorrow = new Date()
+      tomorrow.setDate(tomorrow.getDate() + 1)
+      setDailyLoanFirstDueDate(toLocalISODate(tomorrow))
+
+      alert("Préstamo diario creado correctamente.")
+    } finally {
+      setSavingDailyLoan(false)
     }
-
-    if (!dailyLoanAmount || Number(dailyLoanAmount) <= 0) {
-      alert("Ingresá un monto válido.")
-      return
-    }
-
-    if (!dailyLoanFirstDueDate) {
-      alert("Ingresá la fecha del primer vencimiento.")
-      return
-    }
-
-    const baseAmount = Number(dailyLoanAmount)
-    const interestPercent = Number(dailyLoanInterest || 0)
-    const installmentsCount = Number(dailyLoanPlan)
-
-    const totalAmount =
-  baseAmountNum + baseAmountNum * (interestPercentNum / 100)
-
-const installmentAmount =
-  installmentsNum > 0 ? totalAmount / installmentsNum : 0
-
-    const opRes = await supabase
-  .from("operations")
-  .insert({
-    seller_id: userId,
-    client_id: selectedClientId,
-    operation_type: operationType,
-    frequency: frequency,
-    base_amount: baseAmountNum,
-    interest_percent: interestPercentNum,
-    installments_count: installmentsNum,
-    total_amount: totalAmount,
-    installment_amount: installmentAmount,
-    notes: notes || null,
-    first_due_date: firstDueDate || null,
-  })
-  .select("id")
-  .single()
-
-    if (opRes.error) {
-      alert(opRes.error.message)
-      return
-    }
-
-    await fetchOperations(userId, role)
-    await fetchCobranza(userId, role)
-
-    setDailyClientMode("existing")
-    setDailySelectedClientId("")
-    setDailyFirstName("")
-    setDailyLastName("")
-    setDailyDni("")
-    setDailyPhone("")
-    setDailyAddress("")
-    setDailyLoanAmount("")
-    setDailyLoanPlan(12)
-    setDailyLoanInterest("20")
-
-    const tomorrow = new Date()
-tomorrow.setDate(tomorrow.getDate() + 1)
-
-const yyyy = tomorrow.getFullYear()
-const mm = String(tomorrow.getMonth() + 1).padStart(2, "0")
-const dd = String(tomorrow.getDate()).padStart(2, "0")
-
-setDailyLoanFirstDueDate(${yyyy}-${mm}-${dd})
-
-    alert("Préstamo diario creado correctamente.")
-  } finally {
-    setSavingDailyLoan(false)
   }
-}
+
 const reportMonthRange = useMemo(() => {
   const [year, month] = reportMonth.split("-").map(Number)
 
@@ -983,7 +972,6 @@ const reportMonthRange = useMemo(() => {
 
   return { start, end }
 }, [reportMonth])
-
 const reportMonthLabel = useMemo(() => {
   if (!reportMonthRange.start) return "—"
 
@@ -992,19 +980,51 @@ const reportMonthLabel = useMemo(() => {
     month: "long",
   })
 }, [reportMonthRange])
-
 const reportOpsSummary = useMemo(() => {
   const [year, month] = reportMonth.split("-").map(Number)
-
   if (!year || !month) {
     return {
       closedOps: [] as Operation[],
       openOps: [] as Operation[],
     }
   }
+const reportEconomicSummary = useMemo(() => {
+  const closedCapital = reportOpsSummary.closedOps.reduce((acc, op) => {
+    return acc + Number(op.base_amount ?? 0)
+  }, 0)
+
+  const openCapital = reportOpsSummary.openOps.reduce((acc, op) => {
+    return acc + Number(op.base_amount ?? 0)
+  }, 0)
+
+  const paidByOperation = new Map<string, number>()
+
+  for (const row of installmentsData) {
+    const current = paidByOperation.get(row.operation_id) ?? 0
+    const amount = Number(row.amount ?? row.operation?.installment_amount ?? 0)
+
+    if (row.status === "paid") {
+      paidByOperation.set(row.operation_id, current + amount)
+    }
+  }
+
+  const pendingToCollect = reportOpsSummary.openOps.reduce((acc, op) => {
+    const paid = paidByOperation.get(op.id) ?? 0
+    const total = Number(op.total_amount ?? 0)
+    const pending = Math.max(0, total - paid)
+    return acc + pending
+  }, 0)
+
+  return {
+    closedCapital,
+    openCapital,
+    pendingToCollect,
+  }
+}, [reportOpsSummary, installmentsData])
 
   const monthStart = new Date(year, month - 1, 1)
   const monthEnd = new Date(year, month, 0, 23, 59, 59, 999)
+
   const installmentsByOp = new Map<string, InstallmentRow[]>()
 
   for (const row of installmentsData) {
@@ -1026,6 +1046,7 @@ const reportOpsSummary = useMemo(() => {
     }
 
     const allPaid = rows.every((r) => r.status === "paid")
+
     if (!allPaid) {
       openOps.push(op)
       continue
@@ -1046,21 +1067,20 @@ const reportOpsSummary = useMemo(() => {
 
     if (closedAt >= monthStart && closedAt <= monthEnd) {
       closedOps.push(op)
-    } else {
-      openOps.push(op)
     }
   }
 
   return { closedOps, openOps }
 }, [reportMonth, operations, installmentsData])
-
 const reportEconomicSummary = useMemo(() => {
-  const closedCapital = reportOpsSummary.closedOps.reduce((acc, op) => acc + Number(op.base_amount ?? 0), 0)
-  const openCapital = reportOpsSummary.openOps.reduce((acc, op) => acc + Number(op.base_amount ?? 0), 0)
-  const interestEarned = reportOpsSummary.closedOps.reduce(
-    (acc, op) => acc + Math.max(0, Number(op.total_amount ?? 0) - Number(op.base_amount ?? 0)),
-    0
-  )
+
+  const closedCapital = reportOpsSummary.closedOps.reduce((acc, op) => {
+    return acc + Number(op.base_amount ?? 0)
+  }, 0)
+
+  const openCapital = reportOpsSummary.openOps.reduce((acc, op) => {
+    return acc + Number(op.base_amount ?? 0)
+  }, 0)
 
   const paidByOperation = new Map<string, number>()
 
@@ -1076,18 +1096,19 @@ const reportEconomicSummary = useMemo(() => {
   const pendingToCollect = reportOpsSummary.openOps.reduce((acc, op) => {
     const paid = paidByOperation.get(op.id) ?? 0
     const total = Number(op.total_amount ?? 0)
-    return acc + Math.max(0, total - paid)
+    const pending = Math.max(0, total - paid)
+    return acc + pending
   }, 0)
 
   return {
     closedCapital,
     openCapital,
-    pendingToCollect,
-    interestEarned,
+    pendingToCollect
   }
+
 }, [reportOpsSummary, installmentsData])
 
-// ---------- UI ----------
+  // ---------- UI ----------
   if (loading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-zinc-950 via-zinc-900 to-black text-zinc-100 flex items-center justify-center">
@@ -1109,7 +1130,7 @@ const reportEconomicSummary = useMemo(() => {
     <div className="min-h-screen bg-gradient-to-br from-zinc-950 via-zinc-900 to-black text-zinc-100">
       <div className="max-w-6xl mx-auto p-4 sm:p-8">
         {/* Top bar */}
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-5">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-5">
           <div>
             <div className="text-2xl font-semibold tracking-tight">CrediElectro Dyn</div>
             <div className="text-sm text-zinc-400">
@@ -1118,7 +1139,7 @@ const reportEconomicSummary = useMemo(() => {
             </div>
           </div>
           
-          <div className="grid grid-cols-2 gap-2 sm:flex">
+          <div className="flex gap-2">
             <button
               type="button"
               onClick={async () => {
@@ -1135,10 +1156,11 @@ const reportEconomicSummary = useMemo(() => {
             </button>
           </div>
         </div>
-
+        </div>
+        
         {/* NAV (admin + seller) */}
-        <div className="mb-6 overflow-x-auto pb-1">
-          <div className="inline-flex min-w-full sm:min-w-0 rounded-2xl border border-zinc-800 bg-zinc-950/60 backdrop-blur p-1 gap-1">
+        <div className="mb-6">
+          <div className="inline-flex rounded-2xl border border-zinc-800 bg-zinc-950/60 backdrop-blur p-1">
             <button
               type="button"
               onClick={() => setView("ops")}
@@ -1162,17 +1184,15 @@ const reportEconomicSummary = useMemo(() => {
               Cobranza
             </button>
 
-            {role !== "admin" && (
-              <button
-                type="button"
-                onClick={() => setView("daily-loans")}
-                className={`px-4 py-2 rounded-xl text-sm font-semibold transition ${
-                  view === "daily-loans" ? "bg-purple-600 text-white" : "text-zinc-200 hover:bg-zinc-900"
-                }`}
-              >
-                Préstamos diarios
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={() => setView("daily-loans")}
+              className={`px-4 py-2 rounded-xl text-sm font-semibold transition ${
+                view === "daily-loans" ? "bg-purple-600 text-white" : "text-zinc-200 hover:bg-zinc-900"
+              }`}
+            >
+              Préstamos diarios
+            </button>
           </div>
         </div>
 
@@ -1420,43 +1440,61 @@ const reportEconomicSummary = useMemo(() => {
         )}
 
         {role === "admin" && view === "ops" && (
-          <div className="mt-6 rounded-2xl border border-zinc-800 bg-zinc-950/60 backdrop-blur p-4 sm:p-6 shadow-xl">
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-              <div>
-                <div className="text-lg font-semibold mb-1">Reporte mensual</div>
-                <div className="text-xs text-zinc-400">
-                  Operaciones cerradas, abiertas y resumen económico del mes elegido.
-                </div>
-              </div>
+  <div className="mt-6 rounded-2xl border border-zinc-800 bg-zinc-950/60 backdrop-blur p-4 sm:p-6 shadow-xl">
+    <div className="text-lg font-semibold mb-1">Reporte mensual</div>
+    <div className="text-xs text-zinc-400 mb-4">
+      Acá vamos a mostrar operaciones cerradas, abiertas y resumen económico del mes.
+    </div>
+    <div className="mb-4">
+  <div className="text-sm text-zinc-300 mb-2">Seleccionar mes</div>
+  <input
+  type="month"
+  value={reportMonth}
+  onChange={(e) => setReportMonth(e.target.value)}
+  className="px-3 py-2 rounded-xl bg-zinc-800 text-white border border-zinc-600"
+/>
+</div>
 
-              <div className="w-full sm:w-auto">
-                <div className="text-sm text-zinc-300 mb-2">Seleccionar mes</div>
-                <input
-                  type="month"
-                  value={reportMonth}
-                  onChange={(e) => setReportMonth(e.target.value)}
-                  className="w-full sm:w-auto px-3 py-2 rounded-xl bg-zinc-800 text-white border border-zinc-600"
-                />
-              </div>
-            </div>
+    <div className="rounded-xl border border-dashed border-zinc-700 p-4 text-sm text-zinc-400">
+  Mes seleccionado: <span className="text-zinc-200 font-medium">{reportMonthLabel}</span>
+</div>
+<div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
+  <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
+    <div className="text-xs text-zinc-400">Operaciones cerradas del mes</div>
+    <div className="text-2xl font-semibold text-emerald-300">
+      {reportOpsSummary.closedOps.length}
+    </div>
+  </div>
 
-            <div className="mt-4 rounded-xl border border-dashed border-zinc-700 p-4 text-sm text-zinc-400">
-              Mes seleccionado: <span className="text-zinc-200 font-medium capitalize">{reportMonthLabel}</span>
-            </div>
+  <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
+    <div className="text-xs text-zinc-400">Operaciones abiertas</div>
+    <div className="text-2xl font-semibold text-amber-300">
+      {reportOpsSummary.openOps.length}
+    </div>
+  </div>
+</div>
+<div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-4">
+  <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
+    <div className="text-xs text-zinc-400">Capital recuperado</div>
+    <div className="text-2xl font-semibold text-emerald-300">
+      {money(reportEconomicSummary.closedCapital)}
+    </div>
+  </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 mt-4">
-              <ReportCard label="Operaciones cerradas del mes" value={String(reportOpsSummary.closedOps.length)} tone="emerald" />
-              <ReportCard label="Operaciones abiertas" value={String(reportOpsSummary.openOps.length)} tone="amber" />
-              <ReportCard label="Capital recuperado" value={money(reportEconomicSummary.closedCapital)} tone="emerald" />
-              <ReportCard label="Capital en la calle" value={money(reportEconomicSummary.openCapital)} tone="amber" />
-            </div>
+  <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
+    <div className="text-xs text-zinc-400">Capital en la calle</div>
+    <div className="text-2xl font-semibold text-amber-300">
+      {money(reportEconomicSummary.openCapital)}
+    </div>
+  </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
-              <ReportCard label="Pendiente por cobrar" value={money(reportEconomicSummary.pendingToCollect)} tone="sky" />
-              <ReportCard label="Interés ganado en cerradas" value={money(reportEconomicSummary.interestEarned)} tone="violet" />
-            </div>
-          </div>
-        )}
+  <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
+    <div className="text-xs text-zinc-400">Pendiente por cobrar</div>
+    <div className="text-2xl font-semibold text-sky-300">
+      {money(reportEconomicSummary.pendingToCollect)}
+    </div>
+  </div>
+</div>
 
         {role === "admin" && (
           <div className="mt-6 rounded-2xl border border-zinc-800 bg-zinc-950/60 backdrop-blur p-4 sm:p-6 shadow-xl">
@@ -1555,79 +1593,7 @@ const reportEconomicSummary = useMemo(() => {
             </div>
 
             {/* Pendientes / Atrasadas */}
-            <div className="md:hidden space-y-3 mb-4">
-              {cobranzaRows.length === 0 ? (
-                <div className="rounded-xl border border-zinc-800 bg-zinc-950/40 p-4 text-sm text-zinc-400">
-                  No hay cuotas pendientes 🎉
-                </div>
-              ) : (
-                cobranzaRows.map((r: any) => (
-                  <div key={r.id} className="rounded-2xl border border-zinc-800 bg-zinc-950/40 p-4 shadow-sm">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <div className="font-semibold text-zinc-100">{r._clientName}</div>
-                        <div className="text-xs text-zinc-400 mt-1">Vence: {dateAR(r.due_date)} · Cuota #{r.installment_number}</div>
-                      </div>
-                      {role === "admin" && (
-                        <span className="text-[11px] rounded-full border border-zinc-700 px-2 py-1 text-zinc-300">
-                          {r.seller_name ?? "Vendedor"}
-                        </span>
-                      )}
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-3 mt-4 text-sm">
-                      <div className="rounded-xl bg-zinc-900/60 p-3">
-                        <div className="text-xs text-zinc-400">Monto</div>
-                        <div className="font-semibold text-sky-300">{money(r._amount)}</div>
-                      </div>
-                      <div className="rounded-xl bg-zinc-900/60 p-3">
-                        <div className="text-xs text-zinc-400">Total a cobrar</div>
-                        <div className="font-semibold text-emerald-300">{money(r._totalToPay)}</div>
-                      </div>
-                      <div className="rounded-xl bg-zinc-900/60 p-3">
-                        <div className="text-xs text-zinc-400">Atraso</div>
-                        <div className="font-semibold text-amber-300">{r._daysLate > 0 ? `${r._daysLate} días` : '0 días'}</div>
-                      </div>
-                      <div className="rounded-xl bg-zinc-900/60 p-3">
-                        <div className="text-xs text-zinc-400">Mora</div>
-                        <div className="font-semibold text-amber-300">{r._lateFee > 0 ? money(r._lateFee) : '—'}</div>
-                      </div>
-                    </div>
-
-                    {(r._clientPhone || r._clientAddress) && (
-                      <div className="text-xs text-zinc-400 mt-3">
-                        {r._clientPhone ? `📞 ${r._clientPhone}` : ''}
-                        {r._clientPhone && r._clientAddress ? ' · ' : ''}
-                        {r._clientAddress ? `📍 ${r._clientAddress}` : ''}
-                      </div>
-                    )}
-
-                    {role !== "admin" && (
-                      <div className="grid grid-cols-2 gap-2 mt-4">
-                        <button
-                          type="button"
-                          onClick={() => markInstallmentPaid(r.id)}
-                          disabled={savingCobranzaId === r.id}
-                          className="w-full px-3 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 font-semibold"
-                        >
-                          {savingCobranzaId === r.id ? 'Guardando...' : 'Pagó'}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => markInstallmentNoPay(r.id)}
-                          disabled={savingCobranzaId === r.id}
-                          className="w-full px-3 py-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 disabled:opacity-60 font-semibold"
-                        >
-                          No pagó
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                ))
-              )}
-            </div>
-
-            <div className="hidden md:block overflow-x-auto border border-zinc-800 rounded-xl bg-zinc-950/40 backdrop-blur">
+            <div className="overflow-x-auto border border-zinc-800 rounded-xl bg-zinc-950/40 backdrop-blur">
               <table className="min-w-[1300px] w-full text-sm table-auto border-collapse">
                 <thead className="bg-zinc-900">
                   <tr>
@@ -2158,81 +2124,13 @@ function OperationsTable({
         <div className="text-lg font-semibold">Operaciones</div>
       </div>
 
-      <div className="md:hidden space-y-3">
-        {operations.length === 0 ? (
-          <div className="rounded-xl border border-zinc-800 bg-zinc-950/40 p-4 text-sm text-zinc-400">No hay operaciones.</div>
-        ) : (
-          operations.map((op) => {
-            const detail = op.operation_type === "sale" ? op.sale_item : op.loan_purpose
-            return (
-              <div key={op.id} className="rounded-2xl border border-zinc-800 bg-zinc-950/40 p-4 shadow-sm">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <div className="font-semibold text-zinc-100">{detail || "Sin detalle"}</div>
-                    <div className="text-xs text-zinc-400 mt-1">{op.operation_type === "sale" ? "Venta" : "Préstamo"} · {freqLabel[op.frequency]}</div>
-                  </div>
-                  {role === "admin" && (
-                    <span className="text-[11px] rounded-full border border-zinc-700 px-2 py-1 text-zinc-300">
-                      {op.seller_name ?? "Vendedor"}
-                    </span>
-                  )}
-                </div>
-
-                <div className="grid grid-cols-2 gap-3 mt-4 text-sm">
-                  <div className="rounded-xl bg-zinc-900/60 p-3">
-                    <div className="text-xs text-zinc-400">Fecha</div>
-                    <div>{new Date(op.created_at).toLocaleDateString("es-AR")}</div>
-                  </div>
-                  <div className="rounded-xl bg-zinc-900/60 p-3">
-                    <div className="text-xs text-zinc-400">1ra cuota</div>
-                    <div className="text-emerald-300 font-semibold">{dateAR(op.first_due_date)}</div>
-                  </div>
-                  <div className="rounded-xl bg-zinc-900/60 p-3">
-                    <div className="text-xs text-zinc-400">Total</div>
-                    <div className="text-sky-300 font-semibold">{money(op.total_amount)}</div>
-                  </div>
-                  <div className="rounded-xl bg-zinc-900/60 p-3">
-                    <div className="text-xs text-zinc-400">Cuota</div>
-                    <div>{money(op.installment_amount)}</div>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-3 gap-3 mt-3 text-sm">
-                  <div>
-                    <div className="text-xs text-zinc-500">Base</div>
-                    <div>{money(op.base_amount)}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-zinc-500">Interés</div>
-                    <div>{op.interest_percent}%</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-zinc-500">Cuotas</div>
-                    <div>{op.installments_count}</div>
-                  </div>
-                </div>
-
-                {canAdminActions && (
-                  <div className="grid grid-cols-2 gap-2 mt-4">
-                    <button className="w-full px-3 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700" onClick={() => onEdit?.(op)} type="button">
-                      Editar
-                    </button>
-                    <button className="w-full px-3 py-2 rounded-xl bg-red-600 hover:bg-red-500" onClick={() => onDelete?.(op.id)} type="button">
-                      Borrar
-                    </button>
-                  </div>
-                )}
-              </div>
-            )
-          })
-        )}
-      </div>
-
-      <div className="hidden md:block overflow-x-auto border border-zinc-800 rounded-xl bg-zinc-950/40 backdrop-blur">
+      <div className="overflow-x-auto border border-zinc-800 rounded-xl bg-zinc-950/40 backdrop-blur">
         <table className="min-w-[1200px] w-full text-sm table-auto border-collapse">
           <thead className="bg-zinc-900">
             <tr>
-              {role === "admin" && <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Vendedor</th>}
+              {role === "admin" && (
+                <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Vendedor</th>
+              )}
               <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Fecha</th>
               <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">1ra cuota</th>
               <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Tipo</th>
@@ -2243,7 +2141,9 @@ function OperationsTable({
               <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Total</th>
               <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Cuotas</th>
               <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Cuota</th>
-              {canAdminActions && <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Acciones</th>}
+              {canAdminActions && (
+                <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Acciones</th>
+              )}
             </tr>
           </thead>
 
@@ -2263,24 +2163,51 @@ function OperationsTable({
                       <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{op.seller_name ?? "Vendedor"}</td>
                     )}
 
-                    <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{new Date(op.created_at).toLocaleString("es-AR")}</td>
-                    <td className="p-2 border-b border-zinc-900 whitespace-nowrap text-emerald-300 font-semibold">{dateAR(op.first_due_date)}</td>
-                    <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{op.operation_type === "sale" ? "Venta" : "Préstamo"}</td>
-                    <td className="p-2 border-b border-zinc-900 min-w-[220px]">{detail || <span className="text-zinc-500">—</span>}</td>
+                    <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
+                      {new Date(op.created_at).toLocaleString("es-AR")}
+                    </td>
+
+                    <td className="p-2 border-b border-zinc-900 whitespace-nowrap text-emerald-300 font-semibold">
+                      {dateAR(op.first_due_date)}
+                    </td>
+
+                    <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
+                      {op.operation_type === "sale" ? "Venta" : "Préstamo"}
+                    </td>
+
+                    <td className="p-2 border-b border-zinc-900 min-w-[220px]">
+                      {detail || <span className="text-zinc-500">—</span>}
+                    </td>
+
                     <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{freqLabel[op.frequency]}</td>
+
                     <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{money(op.base_amount)}</td>
+
                     <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{op.interest_percent}%</td>
-                    <td className="p-2 border-b border-zinc-900 whitespace-nowrap text-sky-300 font-semibold">{money(op.total_amount)}</td>
+
+                    <td className="p-2 border-b border-zinc-900 whitespace-nowrap text-sky-300 font-semibold">
+                      {money(op.total_amount)}
+                    </td>
+
                     <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{op.installments_count}</td>
+
                     <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{money(op.installment_amount)}</td>
 
                     {canAdminActions && (
                       <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
                         <div className="flex gap-2">
-                          <button className="px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700" onClick={() => onEdit?.(op)} type="button">
+                          <button
+                            className="px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700"
+                            onClick={() => onEdit?.(op)}
+                            type="button"
+                          >
                             Editar
                           </button>
-                          <button className="px-2 py-1 rounded bg-red-600 hover:bg-red-500" onClick={() => onDelete?.(op.id)} type="button">
+                          <button
+                            className="px-2 py-1 rounded bg-red-600 hover:bg-red-500"
+                            onClick={() => onDelete?.(op.id)}
+                            type="button"
+                          >
                             Borrar
                           </button>
                         </div>
@@ -2293,30 +2220,6 @@ function OperationsTable({
           </tbody>
         </table>
       </div>
-    </div>
-  )
-}
-
-function ReportCard({
-  label,
-  value,
-  tone,
-}: {
-  label: string
-  value: string
-  tone: "emerald" | "amber" | "sky" | "violet"
-}) {
-  const toneClass = {
-    emerald: "text-emerald-300",
-    amber: "text-amber-300",
-    sky: "text-sky-300",
-    violet: "text-violet-300",
-  }[tone]
-
-  return (
-    <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
-      <div className="text-xs text-zinc-400">{label}</div>
-      <div className={`text-2xl font-semibold ${toneClass}`}>{value}</div>
     </div>
   )
 }
