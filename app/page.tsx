@@ -938,8 +938,13 @@ const installmentAmount =
     setDailyLoanInterest("20")
 
     const tomorrow = new Date()
-    tomorrow.setDate(tomorrow.getDate() + 1)
-    setDailyLoanFirstDueDate(tomorrow.toISOString().slice(0, 10))
+tomorrow.setDate(tomorrow.getDate() + 1)
+
+const yyyy = tomorrow.getFullYear()
+const mm = String(tomorrow.getMonth() + 1).padStart(2, "0")
+const dd = String(tomorrow.getDate()).padStart(2, "0")
+
+setDailyLoanFirstDueDate(${yyyy}-${mm}-${dd})
 
     alert("Préstamo diario creado correctamente.")
   } finally {
