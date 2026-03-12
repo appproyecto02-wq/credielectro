@@ -32,11 +32,10 @@ function money(n: number) {
 function dateAR(d: string | null) {
   if (!d) return ""
 
-  const onlyDate = d.slice(0, 10)
-  const [y, m, day] = onlyDate.split("-")
-  if (!y || !m || !day) return d
+  const date = d.split("T")[0]   // saca la hora si viene
+  const [y, m, day] = date.split("-")
 
-  return `${day}/${m}/${y}`
+  return ${day}/${m}/${y}
 }
 
 export default function OperationsTable({

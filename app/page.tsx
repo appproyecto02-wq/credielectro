@@ -120,7 +120,7 @@ function dateAR(d: string | null | undefined) {
 
   if (!y || !m || !day) return d
 
-  return `${day}/${m}/${y}`
+  return ${day}/${m}/${y}
 }
 
 function dateTimeAR(d: string | null | undefined) {
