@@ -114,12 +114,15 @@ function fullName(first?: string | null, last?: string | null) {
 
 function dateAR(d: string | null | undefined) {
   if (!d) return "—"
-  try {
-    return new Date(d).toLocaleDateString("es-AR")
-  } catch {
-    return "—"
-  }
+
+  const onlyDate = d.slice(0, 10)
+  const [y, m, day] = onlyDate.split("-")
+
+  if (!y || !m || !day) return d
+
+  return ${day}/${m}/${y}
 }
+
 
 function dateTimeAR(d: string | null | undefined) {
   if (!d) return "—"
@@ -281,11 +284,14 @@ export default function Page() {
   useEffect(() => {
     if (dailyLoanFirstDueDate) return
 
-    const d = new Date()
-    d.setDate(d.getDate() + 1)
+    const tomorrow = new Date()
+tomorrow.setDate(tomorrow.getDate() + 1)
 
-    setDailyLoanFirstDueDate(d.toISOString().slice(0, 10))
-  }, [dailyLoanFirstDueDate])
+const yyyy = tomorrow.getFullYear()
+const mm = String(tomorrow.getMonth() + 1).padStart(2, "0")
+const dd = String(tomorrow.getDate()).padStart(2, "0")
+
+setDailyLoanFirstDueDate(${yyyy}-${mm}-${dd})
 
   // ---------- AUTH ----------
   useEffect(() => {
@@ -409,8 +415,14 @@ export default function Page() {
   }
 
   function todayISO() {
-    const d = new Date()
-    return d.toISOString().split("T")[0]
+   function todayISO() {
+  const d = new Date()
+
+  const yyyy = d.getFullYear()
+  const mm = String(d.getMonth() + 1).padStart(2, "0")
+  const dd = String(d.getDate()).padStart(2, "0")
+
+  return ${yyyy}-${mm}-${dd}
   }
 
   async function fetchCobranza(currentUserId: string, currentRole: Role) {
@@ -775,7 +787,12 @@ export default function Page() {
     return rows
   }, [installmentsData])
 
-  const hoyISO = new Date().toISOString().slice(0, 10)
+const d = new Date()
+const yyyy = d.getFullYear()
+const mm = String(d.getMonth() + 1).padStart(2, "0")
+const dd = String(d.getDate()).padStart(2, "0")
+
+const hoyISO = ${yyyy}-${mm}-${dd}
 
   const cuotasParaHoy = useMemo(() => {
     return cobranzaRows.filter((r) => (r.due_date ?? "").slice(0, 10) === hoyISO)
