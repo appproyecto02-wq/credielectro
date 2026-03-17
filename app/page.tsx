@@ -113,14 +113,15 @@ function fullName(first?: string | null, last?: string | null) {
 }
 
 function dateAR(d: string | null | undefined) {
-  if (!d) return "—"
+  if (!d) return "-"
 
-  const onlyDate = d.slice(0, 10)
-  const [y, m, day] = onlyDate.split("-")
+  const date = new Date(d)
 
-  if (!y || !m || !day) return d
+  const day = date.getDate().toString().padStart(2,"0")
+  const month = (date.getMonth()+1).toString().padStart(2,"0")
+  const year = date.getFullYear()
 
-  return `${day}/${m}/${y}`
+  return ${day}/${month}/${year}
 }
 
 
