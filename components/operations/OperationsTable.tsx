@@ -35,7 +35,7 @@ function dateAR(d: string | null) {
   const date = d.split("T")[0]   // saca la hora si viene
   const [y, m, day] = date.split("-")
 
-  return ${day}/${m}/${y}
+  return '${day}/${m}/${y}'
 }
 
 export default function OperationsTable({
