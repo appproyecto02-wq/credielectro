@@ -113,14 +113,14 @@ function fullName(first?: string | null, last?: string | null) {
 }
 
 function dateAR(d: string | null | undefined) {
-  if (!d) return "-"
+  if (!d) return "—"
 
   const onlyDate = d.slice(0, 10)
   const [y, m, day] = onlyDate.split("-")
 
   if (!y || !m || !day) return d
 
-  return ${day}/${m}/${y}
+  return `${day}/${m}/${y}`
 }
 
 
@@ -903,16 +903,20 @@ const hoyISO = `${yyyy}-${mm}-${dd}`
         return
       }
 
-      if (!dailyLoanFirstDueDate) {
-        alert("Ingresá la fecha del primer vencimiento.")
-        return
-      }
-
       const interestPercentValue = toNumber(dailyLoanInterest)
       const installmentsCountValue = Number(dailyLoanPlan)
 
       const totalAmount = baseAmountValue * (1 + interestPercentValue / 100)
       const installmentAmount = installmentsCountValue > 0 ? totalAmount / installmentsCountValue : 0
+
+      const tomorrow = new Date()
+      tomorrow.setDate(tomorrow.getDate() + 1)
+
+      const yyyy = tomorrow.getFullYear()
+      const mm = String(tomorrow.getMonth() + 1).padStart(2, "0")
+      const dd = String(tomorrow.getDate()).padStart(2, "0")
+
+      const forcedFirstDueDate = `${yyyy}-${mm}-${dd}`
 
       const opRes = await supabase
         .from("operations")
@@ -927,7 +931,7 @@ const hoyISO = `${yyyy}-${mm}-${dd}`
           total_amount: totalAmount,
           installment_amount: installmentAmount,
           notes: notes.trim() || null,
-          first_due_date: dailyLoanFirstDueDate,
+          first_due_date: forcedFirstDueDate,
         })
         .select("id")
         .single()
@@ -2183,7 +2187,7 @@ function OperationsTable({
                   </div>
                   <div className="rounded-xl bg-zinc-900/60 p-3">
                     <div className="text-xs text-zinc-400">1ra cuota</div>
-                    <div className="text-emerald-300 font-semibold">{JSON.stringify(op.first_due_date)}</div>
+                    <div className="text-emerald-300 font-semibold">{dateAR(op.first_due_date)}</div>
                   </div>
                   <div className="rounded-xl bg-zinc-900/60 p-3">
                     <div className="text-xs text-zinc-400">Total</div>
