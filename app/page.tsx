@@ -113,13 +113,14 @@ function fullName(first?: string | null, last?: string | null) {
 }
 
 function dateAR(d: string | null | undefined) {
-  if (!d) return ""
+  if (!d) return "—"
 
-  const date = new Date(d)
+  const onlyDate = d.slice(0, 10)
+  const [y, m, day] = onlyDate.split("-")
 
-  return date.toLocaleDateString("es-AR", {
-    timeZone: "America/Argentina/Buenos_Aires"
-  })
+  if (!y || !m || !day) return d
+
+  return `${day}/${m}/${y}`
 }
 
 
@@ -957,11 +958,11 @@ const hoyISO = `${yyyy}-${mm}-${dd}`
       const tomorrowReset = new Date()
       tomorrowReset.setDate(tomorrowReset.getDate() + 1)
 
-      const yyyy = tomorrowReset.getFullYear()
-      const mm = String(tomorrowReset.getMonth() + 1).padStart(2, "0")
-      const dd = String(tomorrowReset.getDate()).padStart(2, "0")
+      const yyyyReset = tomorrowReset.getFullYear()
+      const mmReset = String(tomorrowReset.getMonth() + 1).padStart(2, "0")
+      const ddReset = String(tomorrowReset.getDate()).padStart(2, "0")
 
-      setDailyLoanFirstDueDate(`${yyyy}-${mm}-${dd}`)
+      setDailyLoanFirstDueDate(`${yyyyReset}-${mmReset}-${ddReset}`)
 
       alert("Préstamo diario creado correctamente.")
     } finally {
