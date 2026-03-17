@@ -117,7 +117,9 @@ function dateAR(d: string | null | undefined) {
 
   const date = new Date(d)
 
-  return date.toLocaleDateString("es-AR")
+  return date.toLocaleDateString("es-AR", {
+    timeZone: "America/Argentina/Buenos_Aires"
+  })
 }
 
 
