@@ -113,14 +113,11 @@ function fullName(first?: string | null, last?: string | null) {
 }
 
 function dateAR(d: string | null | undefined) {
-  if (!d) return "—"
+  if (!d) return ""
 
-  const onlyDate = d.slice(0, 10)
-  const [y, m, day] = onlyDate.split("-")
+  const date = new Date(d)
 
-  if (!y || !m || !day) return d
-
-  return `${day}/${m}/${y}`
+  return date.toLocaleDateString("es-AR")
 }
 
 
