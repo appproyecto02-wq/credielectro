@@ -140,10 +140,12 @@ function startOfToday() {
 
 function daysLate(dueDateISO: string | null | undefined) {
   if (!dueDateISO) return 0
-  const due = new Date(dueDateISO)
-  if (Number.isNaN(due.getTime())) return 0
+  // Parsear como fecha LOCAL para evitar desfase UTC en Argentina (UTC-3)
+  const parts = dueDateISO.slice(0, 10).split("-")
+  if (parts.length !== 3) return 0
+  const dueDay = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]))
+  if (Number.isNaN(dueDay.getTime())) return 0
   const today = startOfToday()
-  const dueDay = new Date(due.getFullYear(), due.getMonth(), due.getDate())
   const diffMs = today.getTime() - dueDay.getTime()
   const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
   return Math.max(0, diffDays)
@@ -601,6 +603,14 @@ export default function Page() {
       const clientId = await createClientIfNeeded()
       if (!clientId) return
 
+      // Calcular primera cuota = mañana en hora local (sin desfase UTC)
+      const tomorrowLocal = new Date()
+      tomorrowLocal.setDate(tomorrowLocal.getDate() + 1)
+      const fdY = tomorrowLocal.getFullYear()
+      const fdM = String(tomorrowLocal.getMonth() + 1).padStart(2, "0")
+      const fdD = String(tomorrowLocal.getDate()).padStart(2, "0")
+      const firstDueDate = `${fdY}-${fdM}-${fdD}`
+
       const payload: any = {
         seller_id: userId,
         operation_type: operationType,
@@ -609,6 +619,9 @@ export default function Page() {
         base_amount: baseAmountNum,
         interest_percent: interestPercentNum,
         installments_count: installmentsNum,
+        total_amount: previewTotal,
+        installment_amount: previewInstallment,
+        first_due_date: firstDueDate,
         notes: notes.trim() || null,
         sale_item: operationType === "sale" ? saleItem.trim() || null : null,
         loan_purpose: operationType === "loan" ? loanPurpose.trim() || null : null,
@@ -909,14 +922,11 @@ const hoyISO = `${yyyy}-${mm}-${dd}`
       const totalAmount = baseAmountValue * (1 + interestPercentValue / 100)
       const installmentAmount = installmentsCountValue > 0 ? totalAmount / installmentsCountValue : 0
 
-      const tomorrow = new Date()
-      tomorrow.setDate(tomorrow.getDate() + 1)
-
-      const yyyy = tomorrow.getFullYear()
-      const mm = String(tomorrow.getMonth() + 1).padStart(2, "0")
-      const dd = String(tomorrow.getDate()).padStart(2, "0")
-
-      const forcedFirstDueDate = `${yyyy}-${mm}-${dd}`
+      // Usar la fecha que el usuario eligió en el campo, no forzar mañana
+      if (!dailyLoanFirstDueDate) {
+        alert("Ingresá la fecha del primer vencimiento.")
+        return
+      }
 
       const opRes = await supabase
         .from("operations")
@@ -931,7 +941,7 @@ const hoyISO = `${yyyy}-${mm}-${dd}`
           total_amount: totalAmount,
           installment_amount: installmentAmount,
           notes: notes.trim() || null,
-          first_due_date: forcedFirstDueDate,
+          first_due_date: dailyLoanFirstDueDate,
         })
         .select("id")
         .single()
@@ -940,6 +950,43 @@ const hoyISO = `${yyyy}-${mm}-${dd}`
         alert(opRes.error.message)
         return
       }
+
+      const operationId = (opRes.data as any)?.id as string
+
+      // Generar cuotas diarias con parse de fecha LOCAL (evita desfase UTC en Argentina)
+      const [fdY, fdM, fdD] = dailyLoanFirstDueDate.split("-").map(Number)
+      const installmentsToInsert = Array.from({ length: installmentsCountValue }, (_, i) => {
+        const due = new Date(fdY, fdM - 1, fdD + i) // fecha local, sin UTC
+        const dYear = due.getFullYear()
+        const dMonth = String(due.getMonth() + 1).padStart(2, "0")
+        const dDay = String(due.getDate()).padStart(2, "0")
+        return {
+          operation_id: operationId,
+          installment_number: i + 1,
+          due_date: `${dYear}-${dMonth}-${dDay}`,
+          amount: installmentAmount,
+          status: "pending",
+          paid_at: null,
+        }
+      })
+
+      const insRes = await supabase.from("installments").insert(installmentsToInsert)
+      if (insRes.error) {
+        alert("Operación creada pero error al generar cuotas: " + insRes.error.message)
+        return
+      }
+      await fetchCobranza(userId, role)
+
+      setDailyClientMode("existing")
+      setDailySelectedClientId("")
+      setDailyFirstName("")
+      setDailyLastName("")
+      setDailyDni("")
+      setDailyPhone("")
+      setDailyAddress("")
+      setDailyLoanAmount("")
+      setDailyLoanPlan(12)
+      setDailyLoanInterest("20")
 
       await fetchOperations(userId, role)
       await fetchCobranza(userId, role)
@@ -955,14 +1002,13 @@ const hoyISO = `${yyyy}-${mm}-${dd}`
       setDailyLoanPlan(12)
       setDailyLoanInterest("20")
 
-      const tomorrowReset = new Date()
-      tomorrowReset.setDate(tomorrowReset.getDate() + 1)
-
-      const yyyyReset = tomorrowReset.getFullYear()
-      const mmReset = String(tomorrowReset.getMonth() + 1).padStart(2, "0")
-      const ddReset = String(tomorrowReset.getDate()).padStart(2, "0")
-
-      setDailyLoanFirstDueDate(`${yyyyReset}-${mmReset}-${ddReset}`)
+      // Resetear fecha al día siguiente (local)
+      const nextDay = new Date()
+      nextDay.setDate(nextDay.getDate() + 1)
+      const nY = nextDay.getFullYear()
+      const nM = String(nextDay.getMonth() + 1).padStart(2, "0")
+      const nD = String(nextDay.getDate()).padStart(2, "0")
+      setDailyLoanFirstDueDate(`${nY}-${nM}-${nD}`)
 
       alert("Préstamo diario creado correctamente.")
     } finally {
