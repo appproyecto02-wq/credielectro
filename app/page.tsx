@@ -2183,7 +2183,7 @@ function OperationsTable({
                   </div>
                   <div className="rounded-xl bg-zinc-900/60 p-3">
                     <div className="text-xs text-zinc-400">1ra cuota</div>
-                    <div className="text-emerald-300 font-semibold">{dateAR(op.first_due_date)}</div>
+                    <div className="text-emerald-300 font-semibold">{JSON.stringify(op.first_due_date)}</div>
                   </div>
                   <div className="rounded-xl bg-zinc-900/60 p-3">
                     <div className="text-xs text-zinc-400">Total</div>
