@@ -515,8 +515,10 @@ export default function Page() {
       ])
     }
 
+    // "sep=;" le indica a Excel que el separador es punto y coma (estándar Argentina/España)
     const bom = "\uFEFF"
-    const csv = bom + rows.map((r) => r.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(",")).join("\r\n")
+    const sepHint = "sep=;\r\n"
+    const csv = bom + sepHint + rows.map((r) => r.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(";")).join("\r\n")
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" })
     const url = URL.createObjectURL(blob)
     const a = document.createElement("a")
