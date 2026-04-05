@@ -603,12 +603,25 @@ export default function Page() {
       const clientId = await createClientIfNeeded()
       if (!clientId) return
 
-      // Calcular primera cuota = mañana en hora local (sin desfase UTC)
-      const tomorrowLocal = new Date()
-      tomorrowLocal.setDate(tomorrowLocal.getDate() + 1)
-      const fdY = tomorrowLocal.getFullYear()
-      const fdM = String(tomorrowLocal.getMonth() + 1).padStart(2, "0")
-      const fdD = String(tomorrowLocal.getDate()).padStart(2, "0")
+      // Calcular primera cuota según frecuencia, partiendo de HOY (fecha local, sin desfase UTC)
+      const baseDate = new Date()
+      const todayY = baseDate.getFullYear()
+      const todayM = baseDate.getMonth()
+      const todayD = baseDate.getDate()
+      let firstDueDateObj: Date
+      if (frequency === "weekly") {
+        firstDueDateObj = new Date(todayY, todayM, todayD + 7)
+      } else if (frequency === "biweekly") {
+        firstDueDateObj = new Date(todayY, todayM, todayD + 15)
+      } else if (frequency === "three_weeks") {
+        firstDueDateObj = new Date(todayY, todayM, todayD + 21)
+      } else {
+        // monthly: mismo día del mes siguiente
+        firstDueDateObj = new Date(todayY, todayM + 1, todayD)
+      }
+      const fdY = firstDueDateObj.getFullYear()
+      const fdM = String(firstDueDateObj.getMonth() + 1).padStart(2, "0")
+      const fdD = String(firstDueDateObj.getDate()).padStart(2, "0")
       const firstDueDate = `${fdY}-${fdM}-${fdD}`
 
       const payload: any = {
@@ -630,6 +643,41 @@ export default function Page() {
       const res = await supabase.from("operations").insert(payload).select("id").single()
       if (res.error) {
         alert(res.error.message)
+        return
+      }
+
+      const operationId = (res.data as any)?.id as string
+
+      // Generar cuotas para la operación según frecuencia
+      const freqDays: Record<string, number> = {
+        weekly: 7,
+        biweekly: 15,
+        three_weeks: 21,
+      }
+      const installmentsToInsert = Array.from({ length: installmentsNum }, (_, i) => {
+        let dueDate: Date
+        if (frequency === "monthly") {
+          dueDate = new Date(todayY, todayM + 1 + i, todayD)
+        } else {
+          const days = freqDays[frequency] ?? 7
+          dueDate = new Date(todayY, todayM, todayD + days * (i + 1))
+        }
+        const dY = dueDate.getFullYear()
+        const dM = String(dueDate.getMonth() + 1).padStart(2, "0")
+        const dD = String(dueDate.getDate()).padStart(2, "0")
+        return {
+          operation_id: operationId,
+          installment_number: i + 1,
+          due_date: `${dY}-${dM}-${dD}`,
+          amount: previewInstallment,
+          status: "pending",
+          paid_at: null,
+        }
+      })
+
+      const insRes = await supabase.from("installments").insert(installmentsToInsert)
+      if (insRes.error) {
+        alert("Operación creada pero error al generar cuotas: " + insRes.error.message)
         return
       }
 
