@@ -50,6 +50,7 @@ type Operation = {
 
   // UI only
   seller_name?: string
+  client_name?: string
 }
 
 type InstallmentStatus = "pending" | "paid" | "late" | string
@@ -389,7 +390,7 @@ export default function Page() {
     setErrorMsg(null)
 
     const baseSelect =
-      "id, created_at, first_due_date, seller_id, operation_type, frequency, client_id, base_amount, interest_percent, installments_count, total_amount, installment_amount, notes, sale_item, loan_purpose, late_fee_type, late_fee_value"
+      "id, created_at, first_due_date, seller_id, operation_type, frequency, client_id, base_amount, interest_percent, installments_count, total_amount, installment_amount, notes, sale_item, loan_purpose, late_fee_type, late_fee_value, clients:client_id(first_name, last_name)"
 
     let q = supabase.from("operations").select(baseSelect).order("created_at", { ascending: false })
     if (currentRole !== "admin") q = q.eq("seller_id", currentUserId)
@@ -402,28 +403,26 @@ export default function Page() {
       return
     }
 
-    const ops: Operation[] = (res.data as any) ?? []
+    const rawOps: any[] = (res.data as any) ?? []
 
-    if (currentRole === "admin") {
-      const sellerIds = Array.from(new Set(ops.map((o) => o.seller_id).filter(Boolean)))
-      if (sellerIds.length) {
-        const sellersRes = await supabase.from("profiles").select("id, name").in("id", sellerIds)
+    // Normalizar y agregar client_name
+    const ops: Operation[] = rawOps.map((o) => ({
+      ...o,
+      client_name: fullName(o.clients?.first_name ?? null, o.clients?.last_name ?? null),
+    }))
 
-        const map = new Map<string, string>()
-        if (!sellersRes.error) {
-          for (const p of (sellersRes.data as any[]) ?? []) {
-            map.set(p.id, String(p.name ?? "").trim() || "Vendedor")
-          }
+    // Traer nombres de vendedores (admin)
+    const sellerIds = Array.from(new Set(ops.map((o) => o.seller_id).filter(Boolean)))
+    if (sellerIds.length) {
+      const sellersRes = await supabase.from("profiles").select("id, name").in("id", sellerIds)
+      const map = new Map<string, string>()
+      if (!sellersRes.error) {
+        for (const p of (sellersRes.data as any[]) ?? []) {
+          map.set(p.id, String(p.name ?? "").trim() || "Vendedor")
         }
-
-        setOperations(
-          ops.map((o) => ({
-            ...o,
-            seller_name: map.get(o.seller_id) ?? "Vendedor",
-          }))
-        )
-        return
       }
+      setOperations(ops.map((o) => ({ ...o, seller_name: map.get(o.seller_id) ?? "Vendedor" })))
+      return
     }
 
     setOperations(ops)
@@ -769,13 +768,35 @@ export default function Page() {
   async function deleteOperation(opId: string) {
     if (role !== "admin") return
     if (!confirm("¿Borrar operación?")) return
+
+    // Buscar el client_id de esta operación
+    const opData = operations.find((o) => o.id === opId)
+    const clientId = opData?.client_id ?? null
+
+    // Borrar la operación
     const res = await supabase.from("operations").delete().eq("id", opId)
     if (res.error) {
       alert(res.error.message)
       return
     }
+
+    // Si tenía cliente, verificar si tiene otras operaciones
+    if (clientId) {
+      const { data: otherOps } = await supabase
+        .from("operations")
+        .select("id")
+        .eq("client_id", clientId)
+        .limit(1)
+
+      // Si no tiene más operaciones, borrar el cliente también
+      if (!otherOps || otherOps.length === 0) {
+        await supabase.from("clients").delete().eq("id", clientId)
+      }
+    }
+
     await fetchOperations(userId!, role)
     await fetchCobranza(userId!, role)
+    if (role !== "admin") await fetchClients(userId!)
   }
 
   async function startEditOperation(op: Operation) {
@@ -2418,6 +2439,7 @@ function OperationsTable({
                     <div className="font-semibold text-zinc-100">{detail || "Sin detalle"}</div>
                     <div className="text-xs text-zinc-400 mt-1">{op.operation_type === "sale" ? "Venta" : "Préstamo"} · {freqLabel[op.frequency]}</div>
                   </div>
+                  <div className="text-sm font-semibold text-zinc-100">{(op as any).client_name ?? "—"}</div>
                   {role === "admin" && (
                     <span className="text-[11px] rounded-full border border-zinc-700 px-2 py-1 text-zinc-300">
                       {op.seller_name ?? "Vendedor"}
@@ -2480,6 +2502,7 @@ function OperationsTable({
           <thead className="bg-zinc-900">
             <tr>
               {role === "admin" && <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Vendedor</th>}
+              <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Cliente</th>
               <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Fecha</th>
               <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">1ra cuota</th>
               <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Tipo</th>
@@ -2497,7 +2520,7 @@ function OperationsTable({
           <tbody>
             {operations.length === 0 ? (
               <tr>
-                <td className="p-3 text-zinc-400" colSpan={canAdminActions ? 12 : 11}>
+                <td className="p-3 text-zinc-400" colSpan={canAdminActions ? 13 : 12}>
                   No hay operaciones.
                 </td>
               </tr>
@@ -2509,6 +2532,7 @@ function OperationsTable({
                     {role === "admin" && (
                       <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{op.seller_name ?? "Vendedor"}</td>
                     )}
+                    <td className="p-2 border-b border-zinc-900 whitespace-nowrap font-semibold">{(op as any).client_name ?? "—"}</td>
 
                     <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{new Date(op.created_at).toLocaleString("es-AR")}</td>
                     <td className="p-2 border-b border-zinc-900 whitespace-nowrap text-emerald-300 font-semibold">{dateAR(op.first_due_date)}</td>
