@@ -251,6 +251,8 @@ export default function Page() {
   const [interestPercent, setInterestPercent] = useState("")
   const [installments, setInstallments] = useState("1")
   const [notes, setNotes] = useState("")
+  const [lateFeeType, setLateFeeType] = useState<"fixed_daily" | "percent_daily">("fixed_daily")
+  const [lateFeeValue, setLateFeeValue] = useState("")
 
   const [saving, setSaving] = useState(false)
 
@@ -739,6 +741,8 @@ export default function Page() {
         notes: notes.trim() || null,
         sale_item: operationType === "sale" ? saleItem.trim() || null : null,
         loan_purpose: operationType === "loan" ? loanPurpose.trim() || null : null,
+        late_fee_type: lateFeeType,
+        late_fee_value: toNumber(lateFeeValue) || null,
       }
 
       const res = await supabase.from("operations").insert(payload).select("id").single()
@@ -756,6 +760,8 @@ export default function Page() {
       setInterestPercent("")
       setInstallments("1")
       setNotes("")
+      setLateFeeType("fixed_daily")
+      setLateFeeValue("")
 
       await fetchOperations(userId, role)
       await fetchCobranza(userId!, role)
@@ -1580,6 +1586,44 @@ const reportEconomicSummary = useMemo(() => {
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
                 />
+              </div>
+
+              {/* Mora por atraso */}
+              <div className="mb-4 rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
+                <div className="text-sm text-zinc-300 mb-3 font-semibold">Interés por mora (opcional)</div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <div className="text-xs text-zinc-400 mb-1">Tipo de mora</div>
+                    <select
+                      value={lateFeeType}
+                      onChange={(e) => setLateFeeType(e.target.value as "fixed_daily" | "percent_daily")}
+                      className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
+                    >
+                      <option value="fixed_daily">Monto fijo por día</option>
+                      <option value="percent_daily">% diario sobre la cuota</option>
+                    </select>
+                  </div>
+                  <div>
+                    <div className="text-xs text-zinc-400 mb-1">
+                      {lateFeeType === "fixed_daily" ? "$ por día de atraso" : "% diario"}
+                    </div>
+                    <input
+                      type="number"
+                      min="0"
+                      placeholder={lateFeeType === "fixed_daily" ? "Ej: 500" : "Ej: 2"}
+                      value={lateFeeValue}
+                      onChange={(e) => setLateFeeValue(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl bg-zinc-950 text-zinc-100 border border-zinc-800"
+                    />
+                  </div>
+                </div>
+                {lateFeeValue && toNumber(lateFeeValue) > 0 && (
+                  <div className="text-xs text-amber-300 mt-2">
+                    {lateFeeType === "fixed_daily"
+                      ? `Mora: ${money(toNumber(lateFeeValue))} por cada día de atraso`
+                      : `Mora: ${lateFeeValue}% de la cuota por cada día de atraso`}
+                  </div>
+                )}
               </div>
 
               <button
