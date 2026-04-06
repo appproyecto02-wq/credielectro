@@ -750,38 +750,6 @@ export default function Page() {
 
       const operationId = (res.data as any)?.id as string
 
-      // Generar cuotas para la operación según frecuencia
-      const freqDays: Record<string, number> = {
-        weekly: 7,
-        biweekly: 15,
-        three_weeks: 21,
-      }
-      const installmentsToInsert = Array.from({ length: installmentsNum }, (_, i) => {
-        let dueDate: Date
-        if (frequency === "monthly") {
-          dueDate = new Date(todayY, todayM + 1 + i, todayD)
-        } else {
-          const days = freqDays[frequency] ?? 7
-          dueDate = new Date(todayY, todayM, todayD + days * (i + 1))
-        }
-        const dY = dueDate.getFullYear()
-        const dM = String(dueDate.getMonth() + 1).padStart(2, "0")
-        const dD = String(dueDate.getDate()).padStart(2, "0")
-        return {
-          operation_id: operationId,
-          installment_number: i + 1,
-          due_date: `${dY}-${dM}-${dD}`,
-          amount: previewInstallment,
-          status: "pending",
-          paid_at: null,
-        }
-      })
-
-      const insRes = await supabase.from("installments").insert(installmentsToInsert)
-      if (insRes.error) {
-        alert("Operación creada pero error al generar cuotas: " + insRes.error.message)
-        return
-      }
 
       setSaleItem("")
       setLoanPurpose("")
