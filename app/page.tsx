@@ -441,11 +441,11 @@ export default function Page() {
   }
 
   // ---------- EXPORTAR EXCEL ----------
-  function exportToCSV(filterType: "month" | "week", filterValue: string) {
+  // ---------- HELPERS EXPORT ----------
+  function getDateRange(filterType: "month" | "week", filterValue: string) {
     let startDate: Date
     let endDate: Date
     let fileLabel: string
-
     if (filterType === "month") {
       const [y, m] = filterValue.split("-").map(Number)
       startDate = new Date(y, m - 1, 1)
@@ -458,10 +458,52 @@ export default function Page() {
       const endLabel = `${endDate.getFullYear()}-${String(endDate.getMonth()+1).padStart(2,"0")}-${String(endDate.getDate()).padStart(2,"0")}`
       fileLabel = `${filterValue}_al_${endLabel}`
     }
+    return { startDate, endDate, fileLabel }
+  }
+
+  function downloadCSV(rows: string[][], filename: string) {
+    const bom = "\uFEFF"
+    const sepHint = "sep=;\r\n"
+    const csv = bom + sepHint + rows.map((r) => r.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(";")).join("\r\n")
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = filename
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  function exportOperaciones(filterType: "month" | "week", filterValue: string) {
+    const { startDate, endDate, fileLabel } = getDateRange(filterType, filterValue)
 
     const rows: string[][] = []
-    rows.push(["CUOTAS DEL PERÍODO"])
-    rows.push(["Cliente", "Fecha vencimiento", "Frecuencia", "Monto cuota", "Estado", "Días atraso", "Mora", "Total a cobrar"])
+    rows.push(["Cliente", "Fecha creacion", "Tipo", "Frecuencia", "Monto base", "Total", "Cuotas", "Monto cuota"])
+
+    for (const op of operations) {
+      const created = new Date(op.created_at)
+      if (created < startDate || created > endDate) continue
+      const clientName = (op as any).client_name ?? "—"
+      rows.push([
+        clientName,
+        dateAR(op.created_at.slice(0, 10)),
+        op.operation_type === "sale" ? "Venta" : "Prestamo",
+        freqLabel[op.frequency] ?? "—",
+        String(Math.round(op.base_amount)),
+        String(Math.round(op.total_amount)),
+        String(op.installments_count),
+        String(Math.round(op.installment_amount)),
+      ])
+    }
+
+    downloadCSV(rows, `operaciones_${fileLabel}.csv`)
+  }
+
+  function exportCobranza(filterType: "month" | "week", filterValue: string) {
+    const { startDate, endDate, fileLabel } = getDateRange(filterType, filterValue)
+
+    const rows: string[][] = []
+    rows.push(["Cliente", "Telefono", "Direccion", "Vencimiento", "Cuota #", "Frecuencia", "Monto", "Estado", "Dias atraso", "Mora", "Total a cobrar"])
 
     for (const inst of installmentsData) {
       if (!inst.due_date) continue
@@ -484,7 +526,10 @@ export default function Page() {
 
       rows.push([
         clientName,
+        client?.phone ?? "—",
+        client?.address ?? "—",
         dateAR(inst.due_date),
+        String(inst.installment_number),
         freqLabel[op?.frequency ?? "weekly"] ?? "—",
         String(Math.round(amount)),
         status,
@@ -494,39 +539,11 @@ export default function Page() {
       ])
     }
 
-    rows.push([])
-    rows.push(["OPERACIONES CREADAS EN EL PERÍODO"])
-    rows.push(["Cliente", "Fecha creación", "Tipo", "Frecuencia", "Monto base", "Total", "Cuotas", "Monto cuota"])
+    downloadCSV(rows, `cobranza_${fileLabel}.csv`)
+  }
 
-    for (const op of operations) {
-      const created = new Date(op.created_at)
-      if (created < startDate || created > endDate) continue
-      const inst = installmentsData.find((r) => r.operation_id === op.id)
-      const clientName = fullName(inst?.client?.first_name, inst?.client?.last_name)
-
-      rows.push([
-        clientName,
-        dateAR(op.created_at.slice(0, 10)),
-        op.operation_type === "sale" ? "Venta" : "Préstamo",
-        freqLabel[op.frequency] ?? "—",
-        String(Math.round(op.base_amount)),
-        String(Math.round(op.total_amount)),
-        String(op.installments_count),
-        String(Math.round(op.installment_amount)),
-      ])
-    }
-
-    // "sep=;" le indica a Excel que el separador es punto y coma (estándar Argentina/España)
-    const bom = "\uFEFF"
-    const sepHint = "sep=;\r\n"
-    const csv = bom + sepHint + rows.map((r) => r.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(";")).join("\r\n")
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement("a")
-    a.href = url
-    a.download = `reporte_${fileLabel}.csv`
-    a.click()
-    URL.revokeObjectURL(url)
+  function exportToCSV(filterType: "month" | "week", filterValue: string) {
+    exportOperaciones(filterType, filterValue)
   }
 
 
@@ -1650,10 +1667,10 @@ const reportEconomicSummary = useMemo(() => {
             <OperationsTable role={role} operations={operations} onEdit={startEditOperation} onDelete={deleteOperation} />
 
             {/* Exportar Excel - Operaciones */}
-            <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 backdrop-blur p-4 sm:p-6 shadow-xl">
-              <div className="text-base font-semibold mb-4">📥 Exportar a Excel</div>
+            <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-4 sm:p-5">
+              <div className="text-base font-semibold mb-4">📥 Exportar operaciones</div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="rounded-xl bg-zinc-900/60 p-4">
+                <div className="rounded-xl bg-zinc-950/60 p-4">
                   <div className="text-sm text-zinc-400 mb-2">Por mes</div>
                   <input
                     type="month"
@@ -1663,13 +1680,13 @@ const reportEconomicSummary = useMemo(() => {
                   />
                   <button
                     type="button"
-                    onClick={() => exportToCSV("month", exportMonth)}
+                    onClick={() => exportOperaciones("month", exportMonth)}
                     className="w-full px-4 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-600 font-semibold text-sm"
                   >
-                    Descargar mes
+                    Descargar operaciones del mes
                   </button>
                 </div>
-                <div className="rounded-xl bg-zinc-900/60 p-4">
+                <div className="rounded-xl bg-zinc-950/60 p-4">
                   <div className="text-sm text-zinc-400 mb-2">Por semana (elegí el lunes)</div>
                   <input
                     type="date"
@@ -1679,10 +1696,10 @@ const reportEconomicSummary = useMemo(() => {
                   />
                   <button
                     type="button"
-                    onClick={() => exportToCSV("week", exportWeek)}
+                    onClick={() => exportOperaciones("week", exportWeek)}
                     className="w-full px-4 py-2 rounded-xl bg-sky-700 hover:bg-sky-600 font-semibold text-sm"
                   >
-                    Descargar semana
+                    Descargar operaciones de la semana
                   </button>
                 </div>
               </div>
@@ -2075,10 +2092,10 @@ const reportEconomicSummary = useMemo(() => {
                   />
                   <button
                     type="button"
-                    onClick={() => exportToCSV("month", exportMonth)}
+                    onClick={() => exportCobranza("month", exportMonth)}
                     className="w-full px-4 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-600 font-semibold text-sm"
                   >
-                    Descargar mes
+                    Descargar cobranza del mes
                   </button>
                 </div>
                 <div className="rounded-xl bg-zinc-950/60 p-4">
@@ -2091,10 +2108,10 @@ const reportEconomicSummary = useMemo(() => {
                   />
                   <button
                     type="button"
-                    onClick={() => exportToCSV("week", exportWeek)}
+                    onClick={() => exportCobranza("week", exportWeek)}
                     className="w-full px-4 py-2 rounded-xl bg-sky-700 hover:bg-sky-600 font-semibold text-sm"
                   >
-                    Descargar semana
+                    Descargar cobranza de la semana
                   </button>
                 </div>
               </div>
