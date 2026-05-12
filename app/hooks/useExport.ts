@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import type { Operation, InstallmentRow } from "../types"
-import { dateAR, fullName, daysLate, computeLateFee, freqLabel } from "../utils"
+import { dateAR, fullName, daysLate, computeLateFee } from "../utils"
 
 // Nota: freqLabel se importa de utils pero está definido en types.
 // Si da error de import, mové freqLabel a utils.ts también.

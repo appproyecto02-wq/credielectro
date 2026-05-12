@@ -7,9 +7,9 @@ import { useCobranza } from "./hooks/useCobranza"
 import { useDailyLoan } from "./hooks/useDailyLoan"
 import { useExport } from "./hooks/useExport"
 import { useReport } from "./hooks/useReport"
-import { OperationsTable } from "./components/OperationsTable"
-import { ReportCard } from "./components/ReportCard"
-import { EditOperationModal } from "./components/EditOperationModal"
+import { OperationsTable } from "../components/OperationsTable"
+import { ReportCard } from "../components/ReportCard"
+import { EditOperationModal } from "../components/EditOperationModal"
 import { money, fullName, dateAR, dateTimeAR, toNumber } from "./utils"
 import { freqLabel } from "./types"
 
@@ -53,7 +53,7 @@ export default function Page() {
     dailyLoanInterest, setDailyLoanInterest, dailyLoanFirstDueDate, setDailyLoanFirstDueDate,
     savingDailyLoan, createDailyLoan,
     dailyBaseAmount, dailyTotalAmount, dailyInstallmentAmount,
-  } = useDailyLoan(userId, role, clients, fetchClients, fetchCobranza)
+  } = useDailyLoan(userId, role, fetchClients, fetchCobranza, fetchOperations)
 
   const {
     exportMonth, setExportMonth, exportWeek, setExportWeek,

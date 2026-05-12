@@ -1,6 +1,10 @@
-import type { Role, Operation } from "../../types"
-import { freqLabel } from "../../types"
-import { money, dateAR } from "../../utils"
+import type { Role, Operation } from "../app/types"
+import { freqLabel } from "../app/types"
+import { money, dateAR } from "../app/utils"
+
+// Re-export from types since freqLabel lives there
+import { freqLabel as freqLabelMap } from "../app/types"
+import { money as moneyFn, dateAR as dateARFn } from "../app/utils"
 
 export function OperationsTable({
   role,
@@ -36,7 +40,7 @@ export function OperationsTable({
                   <div>
                     <div className="font-semibold text-zinc-100">{detail || "Sin detalle"}</div>
                     <div className="text-xs text-zinc-400 mt-1">
-                      {op.operation_type === "sale" ? "Venta" : "Préstamo"} · {freqLabel[op.frequency]}
+                      {op.operation_type === "sale" ? "Venta" : "Préstamo"} · {freqLabelMap[op.frequency]}
                     </div>
                   </div>
                   <div className="text-sm font-semibold text-zinc-100">{(op as any).client_name ?? "—"}</div>
@@ -54,22 +58,22 @@ export function OperationsTable({
                   </div>
                   <div className="rounded-xl bg-zinc-900/60 p-3">
                     <div className="text-xs text-zinc-400">1ra cuota</div>
-                    <div className="text-emerald-300 font-semibold">{dateAR(op.first_due_date)}</div>
+                    <div className="text-emerald-300 font-semibold">{dateARFn(op.first_due_date)}</div>
                   </div>
                   <div className="rounded-xl bg-zinc-900/60 p-3">
                     <div className="text-xs text-zinc-400">Total</div>
-                    <div className="text-sky-300 font-semibold">{money(op.total_amount)}</div>
+                    <div className="text-sky-300 font-semibold">{moneyFn(op.total_amount)}</div>
                   </div>
                   <div className="rounded-xl bg-zinc-900/60 p-3">
                     <div className="text-xs text-zinc-400">Cuota</div>
-                    <div>{money(op.installment_amount)}</div>
+                    <div>{moneyFn(op.installment_amount)}</div>
                   </div>
                 </div>
 
                 <div className="grid grid-cols-3 gap-3 mt-3 text-sm">
                   <div>
                     <div className="text-xs text-zinc-500">Base</div>
-                    <div>{money(op.base_amount)}</div>
+                    <div>{moneyFn(op.base_amount)}</div>
                   </div>
                   <div>
                     <div className="text-xs text-zinc-500">Interés</div>
@@ -83,8 +87,20 @@ export function OperationsTable({
 
                 {canAdminActions && (
                   <div className="grid grid-cols-2 gap-2 mt-4">
-                    <button className="w-full px-3 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700" onClick={() => onEdit?.(op)} type="button">Editar</button>
-                    <button className="w-full px-3 py-2 rounded-xl bg-red-600 hover:bg-red-500" onClick={() => onDelete?.(op.id)} type="button">Borrar</button>
+                    <button
+                      className="w-full px-3 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700"
+                      onClick={() => onEdit?.(op)}
+                      type="button"
+                    >
+                      Editar
+                    </button>
+                    <button
+                      className="w-full px-3 py-2 rounded-xl bg-red-600 hover:bg-red-500"
+                      onClick={() => onDelete?.(op.id)}
+                      type="button"
+                    >
+                      Borrar
+                    </button>
                   </div>
                 )}
               </div>
@@ -98,7 +114,9 @@ export function OperationsTable({
         <table className="min-w-[1200px] w-full text-sm table-auto border-collapse">
           <thead className="bg-zinc-900">
             <tr>
-              {role === "admin" && <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Vendedor</th>}
+              {role === "admin" && (
+                <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Vendedor</th>
+              )}
               <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Cliente</th>
               <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Fecha</th>
               <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">1ra cuota</th>
@@ -110,34 +128,80 @@ export function OperationsTable({
               <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Total</th>
               <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Cuotas</th>
               <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Cuota</th>
-              {canAdminActions && <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Acciones</th>}
+              {canAdminActions && (
+                <th className="text-left p-2 border-b border-zinc-800 whitespace-nowrap">Acciones</th>
+              )}
             </tr>
           </thead>
+
           <tbody>
             {operations.length === 0 ? (
-              <tr><td className="p-3 text-zinc-400" colSpan={canAdminActions ? 13 : 12}>No hay operaciones.</td></tr>
+              <tr>
+                <td className="p-3 text-zinc-400" colSpan={canAdminActions ? 13 : 12}>
+                  No hay operaciones.
+                </td>
+              </tr>
             ) : (
               operations.map((op) => {
                 const detail = op.operation_type === "sale" ? op.sale_item : op.loan_purpose
                 return (
                   <tr key={op.id} className="odd:bg-zinc-950/40 hover:bg-zinc-900/40 transition">
-                    {role === "admin" && <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{op.seller_name ?? "Vendedor"}</td>}
-                    <td className="p-2 border-b border-zinc-900 whitespace-nowrap font-semibold">{(op as any).client_name ?? "—"}</td>
-                    <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{new Date(op.created_at).toLocaleString("es-AR")}</td>
-                    <td className="p-2 border-b border-zinc-900 whitespace-nowrap text-emerald-300 font-semibold">{dateAR(op.first_due_date)}</td>
-                    <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{op.operation_type === "sale" ? "Venta" : "Préstamo"}</td>
-                    <td className="p-2 border-b border-zinc-900 min-w-[220px]">{detail || <span className="text-zinc-500">—</span>}</td>
-                    <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{freqLabel[op.frequency]}</td>
-                    <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{money(op.base_amount)}</td>
-                    <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{op.interest_percent}%</td>
-                    <td className="p-2 border-b border-zinc-900 whitespace-nowrap text-sky-300 font-semibold">{money(op.total_amount)}</td>
-                    <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{op.installments_count}</td>
-                    <td className="p-2 border-b border-zinc-900 whitespace-nowrap">{money(op.installment_amount)}</td>
+                    {role === "admin" && (
+                      <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
+                        {op.seller_name ?? "Vendedor"}
+                      </td>
+                    )}
+                    <td className="p-2 border-b border-zinc-900 whitespace-nowrap font-semibold">
+                      {(op as any).client_name ?? "—"}
+                    </td>
+                    <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
+                      {new Date(op.created_at).toLocaleString("es-AR")}
+                    </td>
+                    <td className="p-2 border-b border-zinc-900 whitespace-nowrap text-emerald-300 font-semibold">
+                      {dateARFn(op.first_due_date)}
+                    </td>
+                    <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
+                      {op.operation_type === "sale" ? "Venta" : "Préstamo"}
+                    </td>
+                    <td className="p-2 border-b border-zinc-900 min-w-[220px]">
+                      {detail || <span className="text-zinc-500">—</span>}
+                    </td>
+                    <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
+                      {freqLabelMap[op.frequency]}
+                    </td>
+                    <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
+                      {moneyFn(op.base_amount)}
+                    </td>
+                    <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
+                      {op.interest_percent}%
+                    </td>
+                    <td className="p-2 border-b border-zinc-900 whitespace-nowrap text-sky-300 font-semibold">
+                      {moneyFn(op.total_amount)}
+                    </td>
+                    <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
+                      {op.installments_count}
+                    </td>
+                    <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
+                      {moneyFn(op.installment_amount)}
+                    </td>
+
                     {canAdminActions && (
                       <td className="p-2 border-b border-zinc-900 whitespace-nowrap">
                         <div className="flex gap-2">
-                          <button className="px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700" onClick={() => onEdit?.(op)} type="button">Editar</button>
-                          <button className="px-2 py-1 rounded bg-red-600 hover:bg-red-500" onClick={() => onDelete?.(op.id)} type="button">Borrar</button>
+                          <button
+                            className="px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700"
+                            onClick={() => onEdit?.(op)}
+                            type="button"
+                          >
+                            Editar
+                          </button>
+                          <button
+                            className="px-2 py-1 rounded bg-red-600 hover:bg-red-500"
+                            onClick={() => onDelete?.(op.id)}
+                            type="button"
+                          >
+                            Borrar
+                          </button>
                         </div>
                       </td>
                     )}
