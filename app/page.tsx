@@ -57,7 +57,7 @@ export default function Page() {
 
   const {
     exportMonth, setExportMonth, exportWeek, setExportWeek,
-    exportOperaciones, exportCobranza,
+    exportOperaciones, exportCobranza, exportDiariosHoy,
   } = useExport(operations, installmentsData)
 
   const { reportMonth, setReportMonth, reportMonthLabel, reportOpsSummary, reportEconomicSummary } =
@@ -643,6 +643,21 @@ export default function Page() {
                     </button>
                   </div>
                 </div>
+              </div>
+            )}
+
+            {/* Export préstamos diarios de hoy (admin) */}
+            {role === "admin" && (
+              <div className="mt-4 rounded-2xl border border-purple-900/50 bg-purple-950/20 p-4 sm:p-5">
+                <div className="text-base font-semibold mb-1">📅 Préstamos diarios de hoy</div>
+                <div className="text-xs text-zinc-400 mb-4">Exporta todas las cuotas diarias con vencimiento hoy.</div>
+                <button
+                  type="button"
+                  onClick={exportDiariosHoy}
+                  className="w-full sm:w-auto px-5 py-2 rounded-xl bg-purple-700 hover:bg-purple-600 font-semibold text-sm"
+                >
+                  📥 Descargar préstamos diarios de hoy
+                </button>
               </div>
             )}
           </div>

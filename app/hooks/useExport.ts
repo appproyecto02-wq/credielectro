@@ -7,7 +7,6 @@ import { dateAR, fullName, daysLate, computeLateFee } from "../utils"
 // Nota: freqLabel se importa de utils pero está definido en types.
 // Si da error de import, mové freqLabel a utils.ts también.
 import { freqLabel as freq } from "../types"
-
 function downloadCSV(rows: string[][], filename: string) {
   const bom = "\uFEFF"
   const sepHint = "sep=;\r\n"
@@ -119,10 +118,55 @@ export function useExport(operations: Operation[], installmentsData: Installment
     downloadCSV(rows, `cobranza_${fileLabel}.csv`)
   }
 
+  function exportDiariosHoy() {
+    const today = new Date()
+    const yyyy = today.getFullYear()
+    const mm = String(today.getMonth() + 1).padStart(2, "0")
+    const dd = String(today.getDate()).padStart(2, "0")
+    const todayStr = `${yyyy}-${mm}-${dd}`
+
+    const rows: string[][] = [
+      ["Cliente", "Telefono", "Direccion", "Cuota #", "Monto", "Estado", "Dias atraso", "Mora", "Total a cobrar"],
+    ]
+
+    for (const inst of installmentsData) {
+      if (!inst.due_date) continue
+      if (inst.operation?.frequency !== "daily") continue
+      if (inst.due_date.slice(0, 10) !== todayStr) continue
+
+      const op = inst.operation
+      const client = inst.client
+      const amount = Number(inst.amount ?? op?.installment_amount ?? 0)
+      const status = inst.status === "paid" ? "Pagada" : inst.status === "late" ? "Atrasada" : "Pendiente"
+      const late = daysLate(inst.due_date)
+      const fee = computeLateFee({
+        installmentAmount: amount,
+        daysLate: late,
+        lateFeeType: op?.late_fee_type ?? null,
+        lateFeeValue: op?.late_fee_value ?? 0,
+      })
+
+      rows.push([
+        fullName(client?.first_name, client?.last_name),
+        client?.phone ?? "—",
+        client?.address ?? "—",
+        String(inst.installment_number),
+        String(Math.round(amount)),
+        status,
+        String(late),
+        String(Math.round(fee)),
+        String(Math.round(amount + fee)),
+      ])
+    }
+
+    downloadCSV(rows, `prestamos_diarios_${todayStr}.csv`)
+  }
+
   return {
     exportMonth, setExportMonth,
     exportWeek, setExportWeek,
     exportOperaciones,
     exportCobranza,
+    exportDiariosHoy,
   }
 }
